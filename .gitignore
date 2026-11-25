@@ -12,3 +12,5 @@ node_modules/
 .DS_Store
 bot.env.bak
 ui/*.tmp
+ui/dist/
+ui/node_modules/

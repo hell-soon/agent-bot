@@ -63,7 +63,11 @@ chmod 600 bot.env; rm -f bot.env.bak
 ok 'bot.env сохранён'
 
 echo
-say '3. Команда bot'
+say '3. Панель'
+(cd ui && npm install --no-audit --no-fund --silent && npm run build --silent) && ok 'панель собрана (ui/dist)' || { bad 'не удалось собрать панель: cd ui && npm install && npm run build'; exit 1; }
+
+echo
+say '4. Команда bot'
 mkdir -p "$HOME/.local/bin"
 ln -sf "$BOT_DIR/agent.sh" "$HOME/.local/bin/bot"
 chmod +x agent.sh token.sh bin/gh setup.sh
@@ -71,7 +75,7 @@ ok "~/.local/bin/bot → $BOT_DIR/agent.sh"
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) printf '  · добавьте в ~/.zshrc: export PATH="$HOME/.local/bin:$PATH"\n' ;; esac
 
 echo
-say '4. Вход в ИИ'
+say '5. Вход в ИИ'
 if claude auth status >/dev/null 2>&1 || [ -s keys/claude-token ]; then ok 'Claude: вход есть'; else printf '  · Claude: выполните claude (вход) — или claude setup-token и вставьте токен в bot ui → Настройки\n'; fi
 if command -v codex >/dev/null; then
   if codex login status 2>&1 | grep -qi 'logged in'; then ok 'Codex: вход есть'; else printf '  · Codex (необязательно): codex login\n'; fi

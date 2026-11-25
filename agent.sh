@@ -55,6 +55,10 @@ if [ "$1" = ui ]; then
   mkdir -p "$LOGS"
   pid=$(lsof -ti tcp:$UI_PORT -sTCP:LISTEN 2>/dev/null || true)
   if [ "$2" = stop ]; then [ -n "$pid" ] && kill $pid && echo "Панель выключена" || echo "Панель не запущена"; exit 0; fi
+  if [ ! -f "$BOT_DIR/ui/dist/index.html" ]; then
+    echo "Собираю панель (один раз)…"
+    (cd "$BOT_DIR/ui" && npm install --no-audit --no-fund --silent && npm run build --silent) || { echo "Не удалось собрать панель: cd $BOT_DIR/ui && npm install && npm run build" >&2; exit 1; }
+  fi
   if [ -z "$pid" ]; then
     nohup node "$BOT_DIR/ui/server.mjs" >> "$LOGS/ui.log" 2>&1 &
     for _ in 1 2 3 4 5 6 7 8 9 10; do sleep 0.3; lsof -ti tcp:$UI_PORT -sTCP:LISTEN >/dev/null 2>&1 && break; done
@@ -349,6 +353,10 @@ case "$1" in
   _resume) # _resume SESSION "ответ" — продолжение того же разговора (копию не сбрасываем)
     setup_repo; model_opts
     ai_run resume 1 "$2" "$3"; exit 0 ;;
+  _wip)    # после остановки: незаконченное — коммитом «WIP бота» в ветку задачи, копия — снова на main
+    setup_repo; br=$(git branch --show-current)
+    if [ -n "$br" ] && [ "$br" != main ]; then keep_wip "$br" >/dev/null || true; git checkout -q main 2>/dev/null || true; fi
+    exit 0 ;;
   _status) setup_repo; git status --short; exit 0 ;;
   _reset)  setup_repo; git reset -q --hard && git clean -qfd && git checkout -q main; echo ok; exit 0 ;;
 esac

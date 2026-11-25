@@ -216,7 +216,7 @@ function next() {
     current = null
     const why = diagnose(run)
     if (run.status === 'stopped') { /* остановлен вручную */ }
-    else if (run.error) run.status = 'failed'
+    else if (run.error) { run.status = 'failed'; run.reason = /незакоммиченн/.test(run.error) ? 'В копии бота остались несохранённые правки от прошлой задачи, поэтому эта не стартовала. Откройте ту задачу и нажмите «Продолжить» — или отбросьте правки и повторите.' : run.error }
     else if (why?.limit) { run.status = 'limited'; run.reason = why.text; run.resumeAt = why.resetAt }
     else if (run.kind === 'issue' && (run.prUrl || run.closedIssue)) run.status = 'done'
     else if (why) { run.status = 'failed'; run.reason = why.text }
@@ -226,6 +226,7 @@ function next() {
     if (run.closedIssue) run.note = 'Issue уже был закрыт — делать нечего'
     if (run.status === 'failed' && errTail.trim()) appendEvent(run, { type: 'bot_stderr', text: errTail.trim() })
     run.endedAt = Date.now(); run.liveIn = run.liveOut = undefined
+    if (run.status === 'stopped') execFile(AGENT, ['_wip'], { env: { ...ENV, BOT_REPO: run.repo || repoOf() } }, () => {})
     appendEvent(run, { type: 'bot_note', text: label(run.status), at: Date.now() })
     pushState()
     if (!runs.some((r) => r.status === 'queued')) notify(run)
@@ -379,16 +380,26 @@ async function body(req) {
 }
 const json = (res, data, code = 200) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)) }
 
+// Собранная панель (Vue + Vite) — ui/dist; сборка: cd ui && npm run build (bot ui делает сам)
+const DIST = path.join(BOT, 'ui', 'dist')
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' }
+function serveStatic(p, res) {
+  let file = path.normalize(path.join(DIST, decodeURIComponent(p)))
+  if (!file.startsWith(DIST)) { res.writeHead(403); return res.end() }
+  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, 'index.html')
+  if (!fs.existsSync(file)) { res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' }); return res.end('Панель не собрана: cd ui && npm install && npm run build') }
+  const ext = path.extname(file)
+  res.writeHead(200, { 'content-type': TYPES[ext] || 'application/octet-stream', 'cache-control': file.includes('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache' })
+  fs.createReadStream(file).pipe(res)
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x')
   const p = url.pathname
   // только с этого компьютера и только со своей страницы
   if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== `http://127.0.0.1:${PORT}`) return json(res, { error: 'forbidden' }, 403)
 
-  if (p === '/') {
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-    return res.end(fs.readFileSync(path.join(BOT, 'ui', 'index.html')))
-  }
+  if (req.method === 'GET' && !p.startsWith('/api/')) return serveStatic(p, res)
   if (p === '/api/state') return json(res, { ...snapshot(), repo: repoOf(), repos: await repoList(url.searchParams.has('fresh')) })
   if (p === '/api/codex') return json(res, { models: codexModels(), login: await codexLogin(), limits: readCodexLimits(true) })
   if (req.method === 'POST' && p === '/api/codex/limits') { readCodexLimits(true); pushState(); return json(res, { limits: codexLimits }) }

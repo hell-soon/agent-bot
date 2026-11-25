@@ -46,7 +46,7 @@ git clone https://github.com/hell-soon/agent-bot.git ~/agent-bot
 cd ~/agent-bot && ./setup.sh
 ```
 
-`setup.sh` проверит зависимости (`git gh jq node openssl curl` и `claude`), спросит App ID и путь к `.pem`, сам узнает имя бота и доступные репозитории, создаст `bot.env` и команду `bot` в `~/.local/bin`. Повторный запуск безопасен.
+`setup.sh` проверит зависимости (`git gh jq node openssl curl` и `claude`; Node 20+), соберёт панель, спросит App ID и путь к `.pem`, сам узнает имя бота и доступные репозитории, создаст `bot.env` и команду `bot` в `~/.local/bin`. Повторный запуск безопасен.
 
 ### 3. Вход в ИИ
 
@@ -91,6 +91,17 @@ BOT_AI=codex bot 5      разово другим ИИ;  BOT_MODEL=opus BOT_EFFO
 - У **Codex** таких запретов по командам нет — только песочница и правила. Поэтому **защитите `main`**: репозиторий → Settings → Rules → Rulesets → New branch ruleset → Target: default branch → **Restrict updates**, **Block force pushes**; в Bypass list — себя (Repository admin, Always allow). Тогда в `main` попадает только то, что сливаете вы.
 - Секреты — только у вас: `keys/` (ключ приложения, токен Claude) и `bot.env` в git не попадают.
 
+## Панель
+
+Vue 3 + Vite + TypeScript: исходники — `ui/src`, сборка — `ui/dist` (её раздаёт `ui/server.mjs`; `setup.sh` и `bot ui` собирают сами).
+
+```bash
+cd ui
+npm run dev        # горячая перезагрузка на :5173, запросы /api идут в запущенный bot ui
+npm run build      # собрать
+npm run typecheck  # проверить типы
+```
+
 ## Где что лежит
 
 | Путь | Что |
@@ -101,5 +112,10 @@ BOT_AI=codex bot 5      разово другим ИИ;  BOT_MODEL=opus BOT_EFFO
 | `memory/` | память бота по репозиториям |
 | `work/`, `refs/` | рабочие и справочные копии репозиториев |
 | `logs/` | журналы запусков |
+| `ui/` | панель: `src/` (Vue), `server.mjs` — сервер и очередь задач, `codex-adapter.mjs` |
 
 Удалить: `rm ~/.local/bin/bot && rm -rf ~/agent-bot`, затем удалить приложение на GitHub.
+
+## Лицензия
+
+[MIT](LICENSE)
