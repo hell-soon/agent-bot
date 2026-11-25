@@ -53,7 +53,7 @@ export const MODES: Record<Mode, { name: string, ph?: string, hint: string, more
   },
 }
 
-export type DrawerPage = 'main' | 'memory' | 'repo' | 'skills' | 'rules' | 'perms'
+export type DrawerPage = 'main' | 'memory' | 'repo' | 'skills' | 'rules' | 'perms' | 'notify'
 export interface Skill { id: string, name: string, description: string, manual: boolean, source: string, sourceLabel: string, group: string, enabled: boolean, readonly: boolean }
 
 const savedMode = ls.get('bot:mode') as Mode | null
@@ -233,6 +233,14 @@ export function setRepo(r: string) {
   loadGh(); checkRepo(); loadSkills()
 }
 
+// Уведомление браузера — только когда вкладка панели не на экране (на экране и так видно)
+function browserNotify(d: { title: string, body: string, detail?: string, run: string }) {
+  if (!('Notification' in window) || Notification.permission !== 'granted' || document.visibilityState === 'visible')
+    return
+  const n = new Notification(d.title, { body: d.detail ? `${d.body}\n${d.detail}` : d.body, tag: `bot-${d.run}` })
+  n.onclick = () => { window.focus(); select(d.run); n.close() }
+}
+
 // ---------- старт и живое состояние ----------
 export async function init() {
   const [s, st] = await Promise.all([
@@ -268,6 +276,8 @@ export async function init() {
   const live = new EventSource('/api/events')
   live.onmessage = (m) => {
     const d = JSON.parse(m.data)
+    if (d.type === 'notify')
+      return browserNotify(d)
     if (d.type !== 'state')
       return
     const wasBusy = !!store.current

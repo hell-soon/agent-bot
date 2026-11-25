@@ -5,6 +5,7 @@ import { buildFeed } from '../lib/feed'
 import { aiName, md, modKey, money, runTok, STATUS, tok, until } from '../lib/format'
 import { goHome, reply, resetRepo, runAction, selectedRun, store, toast } from '../lib/store'
 import Icon from './Icon.vue'
+import PrSummary from './PrSummary.vue'
 
 const r = selectedRun
 const events = shallowRef<any[]>([])
@@ -358,6 +359,12 @@ function act(a: string) {
           />
         </template>
       </div>
+
+      <pr-summary
+        v-if="r.prUrl || (r.kind === 'pr' && r.pr)"
+        :key="r.id"
+        :run="r"
+      />
 
       <div class="dock">
         <div

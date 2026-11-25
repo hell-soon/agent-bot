@@ -314,6 +314,7 @@ function next() {
     })
   }
   run.reply = undefined
+  if (run.watchdog) { run.watchdog = undefined; run.reason = undefined }
   run.status = 'running'; run.startedAt = Date.now()
   const env = { ...ENV }
   if (run.ai)
@@ -345,10 +346,50 @@ function next() {
   }
   pushState()
 
+  // ---------- сторож: зависание, слишком долго, хождение по кругу ----------
+  const wd = { last: Date.now(), since: Date.now(), sigs: new Map() }
+  const trip = (text) => {
+    if (current?.run !== run || run.status !== 'running')
+      return
+    run.status = 'stopped'; run.watchdog = text
+    run.reason = `Сторож остановил задачу: ${text}. Правки сохранены WIP-коммитом — «Продолжить» продолжит с того же места.`
+    appendEvent(run, { type: 'bot_note', text: `Сторож: ${text}`, at: Date.now() })
+    try { process.kill(-child.pid, 'SIGTERM') }
+    catch {}
+  }
+  const wdTimer = setInterval(() => {
+    const c = readConfig(); const now = Date.now()
+    if (c.watchIdle && now - wd.last > c.watchIdle * 60000)
+      trip(`${c.watchIdle} мин без единого действия — похоже, завис`)
+    else if (c.watchMax && now - wd.since > c.watchMax * 60000)
+      trip(`идёт дольше ${c.watchMax} мин`)
+  }, 30000)
+  const watchTools = (ev) => {
+    const lim = readConfig().watchRepeat
+    if (!lim || ev.type !== 'assistant' || !Array.isArray(ev.message?.content))
+      return
+    for (const c of ev.message.content) {
+      if (c.type !== 'tool_use')
+        continue
+      if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(c.name)) { wd.sigs.clear(); continue }
+      if (c.name === 'TodoWrite')
+        continue
+      const sig = `${c.name} ${JSON.stringify(c.input || {})}`
+      const n = (wd.sigs.get(sig) || 0) + 1
+      wd.sigs.set(sig, n)
+      if (n >= lim) {
+        const what = String(c.input?.command || c.input?.file_path || c.input?.pattern || '').slice(0, 80)
+        trip(`${n} раз подряд одно и то же без правок (${c.name}${what ? `: ${what}` : ''}) — ходит по кругу`)
+      }
+    }
+  }
+
   readline.createInterface({ input: child.stdout }).on('line', (line) => {
+    wd.last = Date.now()
     let ev
     try { ev = JSON.parse(line) }
     catch { ev = { type: 'bot_raw', text: line } }
+    watchTools(ev)
     if (ev.type === 'system' && ev.subtype === 'init') {
       run.sessionId = ev.session_id; run.model ||= ev.model; turn = {
         ids: new Set(),
@@ -396,6 +437,7 @@ function next() {
   let errTail = ''
   child.stderr.on('data', (d) => { errTail = (errTail + d).slice(-4000) })
   child.on('close', (code) => {
+    clearInterval(wdTimer)
     current = null
     const why = diagnose(run)
     if (run.status === 'stopped') { /* остановлен вручную */ }
@@ -438,8 +480,7 @@ function next() {
       at: Date.now(),
     })
     pushState()
-    if (!runs.some(r => r.status === 'queued'))
-      notify(run)
+    notify(run)
     next()
   })
 }
@@ -530,6 +571,14 @@ const DEFAULTS = {
   budget: 8,
   codeMode: true,
   notify: true,
+  // куда и о чём сообщать: macOS, вкладка браузера, Telegram; события — готово / ждёт ответа / не получилось
+  notifyOn: { done: true, waiting: true, failed: true },
+  browserNotify: true,
+  tgChat: '',
+  // сторож: нет событий N мин / задача дольше N мин / одно и то же действие N раз без правок (0 — выключено)
+  watchIdle: 15,
+  watchMax: 90,
+  watchRepeat: 5,
   allowCmds: [],
   denyCmds: [],
   skillsOff: [],
@@ -564,8 +613,12 @@ function writeConfig(patch) {
       c[k] = v
     if (k === 'budget' && Number(v) >= 0.5 && Number(v) <= 100)
       c.budget = Math.round(Number(v) * 100) / 100
-    if (k === 'codeMode' || k === 'notify' || k === 'sizeModels')
+    if (k === 'codeMode' || k === 'notify' || k === 'sizeModels' || k === 'browserNotify')
       c[k] = !!v
+    if (k === 'notifyOn' && v && typeof v === 'object')
+      c.notifyOn = { done: !!v.done, waiting: !!v.waiting, failed: !!v.failed }
+    if (['watchIdle', 'watchMax', 'watchRepeat'].includes(k) && Number(v) >= 0 && Number(v) <= 600)
+      c[k] = Math.round(Number(v))
     if (k === 'repo' && (v === '' || isRepo(v)))
       c.repo = v
     if (['codexModel', 'codexChatModel'].includes(k) && typeof v === 'string' && /^[\w.:-]{0,60}$/.test(v))
@@ -594,6 +647,11 @@ function writeConfig(patch) {
   }
   fs.writeFileSync(CONFIG, JSON.stringify(c, null, 2))
   return c
+}
+// служебные поля, которые панель не присылает напрямую (чат Telegram)
+function writeConfigRaw(patch) {
+  const c = readConfig(); Object.assign(c, patch)
+  fs.writeFileSync(CONFIG, JSON.stringify(c, null, 2))
 }
 // Настройки одного репозитория — config.repos["owner/repo"]
 const REPO_FIELDS = {
@@ -811,11 +869,118 @@ function checkToken(token) {
   })
 }
 
+// ---------- уведомления: macOS, вкладка браузера, Telegram ----------
+const TG_TOKEN = path.join(BOT, 'keys', 'telegram-token')
+const tgToken = () => { try { return fs.readFileSync(TG_TOKEN, 'utf8').trim() } catch { return '' } }
+async function tg(method, payload, token = tgToken()) {
+  const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+    signal: AbortSignal.timeout(10000),
+  })
+  const d = await r.json().catch(() => ({}))
+  if (!d.ok)
+    throw new Error(d.description || `Telegram: ${r.status}`)
+  return d.result
+}
 function notify(run) {
-  if (!readConfig().notify)
+  const c = readConfig(); const on = { ...DEFAULTS.notifyOn, ...c.notifyOn }
+  const kind = run.status === 'done'
+    ? 'done'
+    : run.status === 'waiting'
+      ? 'waiting'
+      : ['failed', 'limited'].includes(run.status) || run.watchdog
+          ? 'failed'
+          : null
+  if (!kind || !on[kind])
     return
-  const t = `${run.title}: ${label(run.status)}`.replace(/["\\]/g, '')
-  execFile('osascript', ['-e', `display notification "${t}" with title "bot"`], () => {})
+  const head = {
+    done: run.prUrl ? 'PR готов' : 'Готово',
+    waiting: 'Бот ждёт ответа',
+    failed: run.watchdog ? 'Сторож остановил' : run.status === 'limited' ? 'Упёрся в лимит' : 'Не получилось',
+  }[kind]
+  const where = (run.repo || '').split('/')[1] || ''
+  const title = `${head}${where ? ` · ${where}` : ''}`
+  const detail = String(kind === 'waiting' ? run.lastText || '' : kind === 'failed' ? run.reason || run.error || '' : '').trim()
+  if (c.notify) {
+    const q = s => String(s).replace(/["\\]/g, '').slice(0, 200)
+    execFile('osascript', ['-e', `display notification "${q(detail || run.title)}" with title "${q(title)}" subtitle "${q(detail ? run.title : '')}"`], () => {})
+  }
+  if (c.browserNotify)
+    broadcast({ type: 'notify', title, body: run.title, detail: detail.slice(0, 200), run: run.id })
+  if (c.tgChat && tgToken()) {
+    const text = [`${title}`, run.title, detail && `\n${detail.slice(0, 600)}`, run.prUrl].filter(Boolean).join('\n')
+    tg('sendMessage', { chat_id: c.tgChat, text, disable_web_page_preview: true }).catch(e => console.error('telegram:', e.message))
+  }
+}
+
+// ---------- итог PR: состояние, проверки, ревью, файлы с diff ----------
+const prCache = new Map()
+async function prSummary(run, fresh) {
+  const n = Number(String(run.prUrl || '').split('/').pop()) || Number(run.pr)
+  if (!n || !isRepo(run.repo))
+    return null
+  const key = `${run.repo}#${n}`; const hit = prCache.get(key)
+  if (hit && !fresh && Date.now() - hit.at < 20000)
+    return hit.data
+  const R = `repos/${run.repo}`
+  const [pr, files, reviews] = await Promise.all([
+    gh(['api', `${R}/pulls/${n}`]),
+    gh(['api', `${R}/pulls/${n}/files?per_page=100`]),
+    gh(['api', `${R}/pulls/${n}/reviews?per_page=100`]),
+  ])
+  if (!pr?.number)
+    return null
+  const [runsRes, status] = await Promise.all([
+    gh(['api', `${R}/commits/${pr.head.sha}/check-runs?per_page=100`]),
+    gh(['api', `${R}/commits/${pr.head.sha}/status`]),
+  ])
+  const checks = [
+    ...(runsRes?.check_runs || []).map(c => ({
+      name: c.name,
+      url: c.html_url,
+      state: c.status !== 'completed'
+        ? 'run'
+        : c.conclusion === 'success'
+          ? 'ok'
+          : ['neutral', 'skipped'].includes(c.conclusion) ? 'skip' : 'fail',
+    })),
+    ...(status?.statuses || []).map(s => ({
+      name: s.context,
+      url: s.target_url,
+      state: s.state === 'success' ? 'ok' : s.state === 'pending' ? 'run' : 'fail',
+    })),
+  ]
+  const last = {}
+  for (const v of Array.isArray(reviews) ? reviews : []) {
+    if (['APPROVED', 'CHANGES_REQUESTED'].includes(v.state))
+      last[v.user?.login] = v.state
+  }
+  const states = Object.values(last)
+  const data = {
+    number: pr.number,
+    url: pr.html_url,
+    title: pr.title,
+    state: pr.merged ? 'merged' : pr.state,
+    draft: !!pr.draft,
+    conflicts: pr.mergeable_state === 'dirty',
+    review: states.includes('CHANGES_REQUESTED') ? 'changes' : states.includes('APPROVED') ? 'approved' : null,
+    comments: (pr.comments || 0) + (pr.review_comments || 0),
+    additions: pr.additions,
+    deletions: pr.deletions,
+    changed: pr.changed_files,
+    checks,
+    files: (Array.isArray(files) ? files : []).map(f => ({
+      name: f.filename,
+      status: f.status,
+      add: f.additions,
+      del: f.deletions,
+      patch: f.patch && f.patch.length > 30000 ? `${f.patch.slice(0, 30000)}\n… (обрезано)` : f.patch || '',
+    })),
+  }
+  prCache.set(key, { at: Date.now(), data })
+  return data
 }
 
 // большие результаты инструментов храним укороченными — лента и так читаемая
@@ -1223,7 +1388,7 @@ const server = http.createServer(async (req, res) => {
         kind: 'pr',
         pr: Number(b.pr),
         text: b.text || '',
-        title: `PR #${b.pr}: ${b.text || 'по ревью и проверкам'}`,
+        title: `PR #${b.pr}: ${{ '@ci': 'упавшие проверки', '@conflicts': 'конфликт с базой' }[b.text] || b.text || 'по ревью и проверкам'}`,
         ...opts,
       }))
     }
@@ -1255,6 +1420,55 @@ const server = http.createServer(async (req, res) => {
     })
   }
 
+  const pm = p.match(/^\/api\/runs\/(\d+)\/pr$/)
+  if (pm) {
+    const run = runs.find(r => r.id === pm[1])
+    if (!run)
+      return json(res, { error: 'Нет такой задачи' }, 404)
+    return json(res, { pr: await prSummary(run, url.searchParams.has('fresh')) })
+  }
+  if (p === '/api/telegram') {
+    const c = readConfig()
+    if (req.method !== 'POST') {
+      let bot = ''
+      if (tgToken())
+        bot = await tg('getMe').then(b => b.username).catch(() => '')
+      return json(res, { set: !!tgToken(), bot, chat: c.tgChat })
+    }
+    const b = await body(req)
+    try {
+      if (b.token) {
+        const t = String(b.token).trim()
+        if (!/^\d+:[\w-]{30,}$/.test(t))
+          return json(res, { error: 'Не похоже на токен бота — его выдаёт @BotFather' }, 400)
+        const me = await tg('getMe', {}, t)
+        fs.mkdirSync(path.dirname(TG_TOKEN), { recursive: true })
+        fs.writeFileSync(TG_TOKEN, `${t}\n`, { mode: 0o600 }); fs.chmodSync(TG_TOKEN, 0o600)
+        return json(res, { set: true, bot: me.username, chat: c.tgChat })
+      }
+      if (b.find) { // чат — тот, кто последним написал боту
+        const ups = await tg('getUpdates', { limit: 50 })
+        const chat = [...ups].reverse().map(u => (u.message || u.my_chat_member || {}).chat).find(Boolean)
+        if (!chat)
+          return json(res, { error: 'Боту пока никто не писал — откройте его в Telegram и нажмите «Старт»' }, 400)
+        writeConfigRaw({ tgChat: String(chat.id) })
+        await tg('sendMessage', { chat_id: chat.id, text: 'Готово: сюда будут приходить сообщения о задачах бота.' })
+        return json(res, { set: true, chat: String(chat.id) })
+      }
+      if (b.test) {
+        await tg('sendMessage', { chat_id: c.tgChat, text: 'Проверка: уведомления работают.' })
+        return json(res, { ok: true })
+      }
+      if (b.remove) {
+        try { fs.unlinkSync(TG_TOKEN) }
+        catch {}
+        writeConfigRaw({ tgChat: '' })
+        return json(res, { set: false, chat: '' })
+      }
+    }
+    catch (e) { return json(res, { error: e.message }, 400) }
+    return json(res, { error: 'Нечего делать' }, 400)
+  }
   const m = p.match(/^\/api\/runs\/(\d+)\/(reply|stop|close|retry|delete)$/)
   if (req.method === 'POST' && m) {
     const run = byId(m[1]); if (!run)
@@ -1296,7 +1510,7 @@ const server = http.createServer(async (req, res) => {
       ].includes(run.status)) {
         if (run.status === 'limited')
           run.status = 'stopped'
-        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, ...rest } = run
+        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, ...rest } = run
         newRun(rest)
       }
     }

@@ -6,6 +6,7 @@ import { api } from '../lib/api'
 import { aiName, modKey } from '../lib/format'
 import { bothAi, enabledSkills, loadCodex, saveSetting, setAi, store, toast } from '../lib/store'
 import Icon from './Icon.vue'
+import SetNotify from './settings/SetNotify.vue'
 import SetPerms from './settings/SetPerms.vue'
 import SetRepo from './settings/SetRepo.vue'
 import SetRules from './settings/SetRules.vue'
@@ -29,6 +30,7 @@ const TITLES: Record<DrawerPage, string> = {
   skills: 'Скиллы',
   rules: 'Правила',
   perms: 'Разрешения',
+  notify: 'Уведомления и сторож',
   memory: 'Память',
 }
 const repoName = computed(() => store.curRepo.split('/')[1] || '')
@@ -171,6 +173,7 @@ async function saveMem() {
         <set-skills v-else-if="store.drawer === 'skills'" />
         <set-rules v-else-if="store.drawer === 'rules'" />
         <set-perms v-else-if="store.drawer === 'perms'" />
+        <set-notify v-else-if="store.drawer === 'notify'" />
 
         <template v-else-if="store.drawer === 'memory'">
           <p class="small">
@@ -263,6 +266,17 @@ async function saveMem() {
                 :size="16"
               /></span>
               <span class="lbl">Разрешения<small>{{ perms ? `своих правил: ${perms}` : 'какие команды можно в фоне' }}</small></span>
+              <span class="chev">›</span>
+            </button>
+            <button
+              class="nav-row"
+              @click="go('notify')"
+            >
+              <span class="ic"><icon
+                name="bell"
+                :size="16"
+              /></span>
+              <span class="lbl">Уведомления и сторож<small>{{ store.cfg.tgChat ? 'Telegram подключён' : 'macOS, браузер, Telegram' }} · остановка зависших</small></span>
               <span class="chev">›</span>
             </button>
             <button
@@ -550,17 +564,7 @@ async function saveMem() {
           </template>
 
           <div class="grp">
-            <h4>Прочее</h4>
-            <div class="set">
-              <div class="lbl">
-                Уведомления macOS<small>Когда задачи закончились</small>
-              </div>
-              <label class="sw"><input
-                type="checkbox"
-                :checked="store.cfg.notify"
-                @change="saveSetting('notify', ($event.target as HTMLInputElement).checked)"
-              ><span /></label>
-            </div>
+            <h4>Клавиши</h4>
             <div class="small keys">
               <span><kbd>{{ modKey }}K</kbd> или <kbd>/</kbd> — поиск · <kbd>N</kbd> — новая задача · <kbd>{{ modKey }},</kbd> — настройки</span>
               <span><kbd>/</kbd> в строке ввода — скиллы · <kbd>{{ modKey }}↵</kbd> — запустить · <kbd>Esc</kbd> — назад</span>
