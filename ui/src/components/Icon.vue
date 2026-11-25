@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Значки в стиле lucide: тонкая линия, currentColor
-defineProps<{ name: string; size?: number }>()
+defineProps<{ name: string, size?: number }>()
 const P: Record<string, string> = {
   bot: '<rect x="4.5" y="8" width="15" height="11.5" rx="4"/><path d="M12 8V5"/><circle cx="12" cy="3.6" r="1.1" fill="currentColor" stroke="none"/><path d="M9.5 13.2v.6M14.5 13.2v.6"/><path d="M2.5 13v2M21.5 13v2"/>',
   task: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
@@ -28,9 +28,23 @@ const P: Record<string, string> = {
 </script>
 
 <template>
-  <svg class="icon" :width="size || 18" :height="size || 18" viewBox="0 0 24 24" aria-hidden="true" v-html="P[name] || P.task" />
+  <svg
+    class="icon"
+    :width="size || 18"
+    :height="size || 18"
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+    v-html="P[name] || P.task"
+  />
 </template>
 
 <style scoped>
-.icon { flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.icon {
+  flex: none;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 </style>
