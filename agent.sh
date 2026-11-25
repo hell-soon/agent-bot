@@ -212,8 +212,16 @@ if [ -n "$BOT_REFS" ]; then
   OPTS[1]="$PROMPT"   # обновить --append-system-prompt
 fi
 # Какой ИИ работает: claude (по умолчанию) или codex. BOT_AI=codex bot … — разово; в панели — ⚙ или у задачи.
-AI=${BOT_AI:-$(rcfg .ai)}; AI=${AI:-$(cfg .ai)}; AI=${AI:-claude}
-case "$AI" in claude|codex) ;; *) echo "Неизвестный ИИ: $AI (claude | codex)" >&2; exit 1 ;; esac
+AI=${BOT_AI:-$(rcfg .ai)}; AI=${AI:-$(cfg .ai)}
+case "${AI:-claude}" in claude|codex) ;; *) echo "Неизвестный ИИ: $AI (claude | codex)" >&2; exit 1 ;; esac
+# Нужен хотя бы один ИИ. Выбранный в настройках не установлен — работает тот, что есть; явный BOT_AI — без подмены
+if ! command -v "${AI:-claude}" >/dev/null; then
+  other=claude; [ "${AI:-claude}" = claude ] && other=codex
+  if [ -n "$BOT_AI" ]; then echo "$BOT_AI не установлен (BOT_AI=$BOT_AI)" >&2; exit 1
+  elif command -v "$other" >/dev/null; then AI=$other
+  else echo "Нет ни одного ИИ: поставьте Claude Code (claude.com/claude-code) или Codex (brew install codex)" >&2; exit 1; fi
+fi
+AI=${AI:-claude}
 ADAPTER="$BOT_DIR/ui/codex-adapter.mjs"
 
 model_opts() { # cheap — значения по умолчанию для тикетов

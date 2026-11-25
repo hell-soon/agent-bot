@@ -14,8 +14,11 @@ missing=0
 for c in git gh jq node openssl curl; do
   if command -v "$c" >/dev/null; then ok "$c"; else bad "$c — поставьте: brew install $c"; missing=1; fi
 done
-if command -v claude >/dev/null; then ok "claude ($(claude --version 2>/dev/null | awk '{print $1}'))"; else bad 'claude — Claude Code: https://claude.com/claude-code'; missing=1; fi
-if command -v codex >/dev/null; then ok 'codex (необязательно)'; else printf '  · codex не найден — необязательно (brew install codex)\n'; fi
+# ИИ — хотя бы один: Claude Code или Codex
+ais=0
+if command -v claude >/dev/null; then ok "claude ($(claude --version 2>/dev/null | awk '{print $1}'))"; ais=1; else printf '  · claude не найден — https://claude.com/claude-code\n'; fi
+if command -v codex >/dev/null; then ok 'codex'; ais=1; else printf '  · codex не найден — brew install codex\n'; fi
+[ "$ais" = 1 ] || { bad 'нужен хотя бы один ИИ: Claude Code или Codex'; missing=1; }
 [ "$missing" = 0 ] || { echo; echo 'Поставьте недостающее и запустите setup.sh ещё раз.'; exit 1; }
 
 [ -f bot.env ] && . ./bot.env
@@ -76,9 +79,11 @@ case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) printf '  · добавьте в
 
 echo
 say '5. Вход в ИИ'
-if claude auth status >/dev/null 2>&1 || [ -s keys/claude-token ]; then ok 'Claude: вход есть'; else printf '  · Claude: выполните claude (вход) — или claude setup-token и вставьте токен в bot ui → Настройки\n'; fi
+if command -v claude >/dev/null; then
+  if claude auth status >/dev/null 2>&1 || [ -s keys/claude-token ]; then ok 'Claude: вход есть'; else printf '  · Claude: выполните claude (вход) — или claude setup-token и вставьте токен в bot ui → Настройки\n'; fi
+fi
 if command -v codex >/dev/null; then
-  if codex login status 2>&1 | grep -qi 'logged in'; then ok 'Codex: вход есть'; else printf '  · Codex (необязательно): codex login\n'; fi
+  if codex login status 2>&1 | grep -qi 'logged in'; then ok 'Codex: вход есть'; else printf '  · Codex: codex login\n'; fi
 fi
 
 echo

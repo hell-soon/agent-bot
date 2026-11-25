@@ -4,7 +4,7 @@ import type { DrawerPage } from '../lib/store'
 import { computed, ref, watch } from 'vue'
 import { api } from '../lib/api'
 import { aiName, modKey } from '../lib/format'
-import { enabledSkills, loadCodex, saveSetting, setAi, store, toast } from '../lib/store'
+import { bothAi, enabledSkills, loadCodex, saveSetting, setAi, store, toast } from '../lib/store'
 import Icon from './Icon.vue'
 import SetPerms from './settings/SetPerms.vue'
 import SetRepo from './settings/SetRepo.vue'
@@ -194,7 +194,10 @@ async function saveMem() {
         </template>
 
         <template v-else-if="store.drawer === 'main'">
-          <div class="grp">
+          <div
+            v-if="bothAi"
+            class="grp"
+          >
             <div class="set">
               <div class="lbl">
                 Кто работает<small>Настройки ниже — для выбранного ИИ</small>

@@ -63,8 +63,9 @@ const cards = computed<Card[]>(() => {
   return out
 })
 const stats = computed(() => {
-  const day = startOfDay(); const t = store.today || {}
+  const day = startOfDay()
   const todays = repoRuns.value.filter(r => (r.endedAt || r.startedAt || r.createdAt) >= day)
+  const t = todays.reduce((a, r) => ({ cost: a.cost + (r.cost || 0), tokIn: a.tokIn + (r.tokIn || 0), tokOut: a.tokOut + (r.tokOut || 0) }), { cost: 0, tokIn: 0, tokOut: 0 })
   return [
     [todays.length, 'задач сегодня'],
     [todays.filter(r => r.prUrl).length, 'PR'],

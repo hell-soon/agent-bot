@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { ago, aiName, isMac, kindIcon, STATUS } from '../lib/format'
-import { checkLimits, enabledSkills, goHome, newTask, repoRuns, select, setAi, setRepo, startJob, store, toast } from '../lib/store'
+import { bothAi, checkLimits, enabledSkills, goHome, newTask, repoRuns, select, setAi, setRepo, startJob, store, toast } from '../lib/store'
 import Icon from './Icon.vue'
 
 interface Item { icon: string, dot?: string, title: string, em?: string, hint?: string, keys?: string, run: () => void }
@@ -165,12 +165,14 @@ const groups = computed(() => {
       k: 'triage метки',
       run: job({ kind: 'triage' }),
     },
-    {
-      icon: 'swap',
-      title: `Переключить на ${aiName(other)}`,
-      k: 'ии claude codex',
-      run: go(() => setAi(other)),
-    },
+    ...(bothAi.value
+      ? [{
+          icon: 'swap',
+          title: `Переключить на ${aiName(other)}`,
+          k: 'ии claude codex',
+          run: go(() => setAi(other)),
+        }]
+      : []),
     {
       icon: 'gear',
       title: 'Настройки',

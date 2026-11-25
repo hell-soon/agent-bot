@@ -68,6 +68,7 @@ export const store = reactive({
   botName: 'bot',
   repos: [] as string[],
   curRepo: '',
+  ais: { claude: true, codex: true } as Record<Ai, boolean>,
   cfg: {} as any,
   gh: { issues: [] as any[], prs: [] as any[] },
   codexInfo: null as null | { models: any[], login: { ok: boolean, text: string }, limits: any },
@@ -96,6 +97,9 @@ store.compose.showMore = !!MODES[store.compose.mode].more
 // История текущего проекта; чужие — только идущие сейчас (очередь общая)
 export const repoRuns = computed(() => store.runs.filter(r => r.repo === store.curRepo))
 export const otherActive = computed(() => store.runs.filter(r => r.repo !== store.curRepo && ['queued', 'running', 'waiting', 'limited'].includes(r.status)))
+
+// Оба ИИ установлены — тогда есть выбор (иначе переключатели не показываем)
+export const bothAi = computed(() => store.ais.claude && store.ais.codex)
 
 export const selectedRun = computed(() => store.runs.find(r => r.id === store.selected) || null)
 // ИИ, который сейчас на экране: у открытой задачи — её, иначе — по умолчанию
@@ -241,6 +245,7 @@ export async function init() {
     limits: s.limits || {},
     codexLimits: s.codexLimits,
     today: s.today || {},
+    ais: s.ais || { claude: true, codex: true },
     botDir: s.botDir,
     botName: s.botName || 'bot',
     cfg: st.config || {},

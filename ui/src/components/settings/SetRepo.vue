@@ -3,7 +3,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { api } from '../../lib/api'
 import { ago, aiName } from '../../lib/format'
-import { store, toast } from '../../lib/store'
+import { bothAi, store, toast } from '../../lib/store'
 
 const s = reactive<Record<string, any>>({
   ai: '',
@@ -69,7 +69,7 @@ async function runNow() {
   }
   finally { checking.value = false }
 }
-const repoAi = computed(() => s.ai || store.cfg.ai || 'claude')
+const repoAi = computed(() => (store.ais[s.ai as 'claude' | 'codex'] ? s.ai : store.cfg.ai) || 'claude')
 const AUTO = [
   ['issues', 'Брать готовые issue', 'с меткой ready-for-agent — сам делает и открывает PR'],
   ['ci', 'Чинить упавший CI', 'в своих PR; не больше 3 попыток подряд'],
@@ -82,7 +82,10 @@ const AUTO = [
   <template v-if="loaded">
     <div class="grp">
       <h4>Кто и как работает здесь</h4>
-      <div class="set">
+      <div
+        v-if="bothAi"
+        class="set"
+      >
         <div class="lbl">
           ИИ<small>Для этого репозитория, иначе — общий</small>
         </div>

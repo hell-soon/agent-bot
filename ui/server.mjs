@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 // Панель бота: http://127.0.0.1:4545 — запускает ../agent.sh в фоне и показывает ход работы.
 // Без зависимостей. Запуск: bot ui
@@ -26,6 +26,13 @@ const STATE = path.join(DATA, 'runs.json')
 const DEFAULT_REPO = BOT_ENV.BOT_DEFAULT_REPO || ''
 const isRepo = r => typeof r === 'string' && /^[\w.-]+\/[\w.-]+$/.test(r)
 const ENV = { ...process.env, PATH: `${path.join(BOT, 'bin')}:${process.env.PATH}` }
+// Какие ИИ установлены: нужен хотя бы один — Claude Code или Codex
+function hasCmd(c) {
+  try { execFileSync('/bin/sh', ['-c', `command -v ${c}`], { env: ENV, stdio: 'ignore' }); return true }
+  catch { return false }
+}
+const AIS = { claude: hasCmd('claude'), codex: hasCmd('codex') }
+const fallbackAi = () => (AIS.claude || !AIS.codex ? 'claude' : 'codex')
 fs.mkdirSync(DATA, { recursive: true })
 
 /** @type {any[]} */
@@ -179,6 +186,7 @@ function snapshot() {
     limits,
     codexLimits: readCodexLimits(),
     today: today(),
+    ais: AIS,
   }
 }
 function pushState() {
@@ -530,13 +538,17 @@ const DEFAULTS = {
   repos: {},
 }
 function readConfig() {
+  let c
   try {
-    return {
+    c = {
       ...DEFAULTS,
       ...JSON.parse(fs.readFileSync(CONFIG, 'utf8')),
     }
   }
-  catch { return { ...DEFAULTS } }
+  catch { c = { ...DEFAULTS } }
+  if (!AIS[c.ai]) // выбранный ИИ не установлен — работает тот, что есть
+    c.ai = fallbackAi()
+  return c
 }
 const ALLOWED = {
   ai: ['claude', 'codex'],
@@ -649,7 +661,7 @@ async function autoTick(force = false) {
   try {
     for (const [repo, rc] of repos) {
       const a = rc.auto
-      const ai = rc.ai || c.ai
+      const ai = AIS[rc.ai] ? rc.ai : c.ai
       if (ai !== 'codex' && Object.values(limits).some(l => l.status === 'rejected' && l.resetsAt > Date.now())) {
         autoLog(repo, 'Пропуск: исчерпан лимит Claude')
         continue
@@ -979,6 +991,8 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && p === '/api/codex/limits') { readCodexLimits(true); pushState(); return json(res, { limits: codexLimits }) }
   if (req.method === 'POST' && p === '/api/limits/check') { // крошечный запрос к Haiku — только чтобы узнать лимиты (~$0.01–0.04)
+    if (!AIS.claude)
+      return json(res, { limits })
     const child = spawn('claude', [
       '-p',
       '--model',
@@ -1154,9 +1168,14 @@ const server = http.createServer(async (req, res) => {
     const b = await body(req)
     const repo = repoOf(b.repo)
     const cfgNow = readConfig()
-    const ai = ['claude', 'codex'].includes(b.ai)
+    let ai = ['claude', 'codex'].includes(b.ai)
       ? b.ai
       : cfgNow.repos?.[repo]?.ai || cfgNow.ai
+    if (!AIS[ai]) {
+      if (['claude', 'codex'].includes(b.ai))
+        return json(res, { error: `${b.ai === 'codex' ? 'Codex' : 'Claude Code'} не установлен` }, 400)
+      ai = cfgNow.ai
+    }
     const refs = (Array.isArray(b.refs)
       ? b.refs
       : []).filter(r => isRepo(r) && r !== repo).slice(0, 4)

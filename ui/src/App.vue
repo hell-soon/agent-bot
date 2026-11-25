@@ -7,7 +7,7 @@ import RunView from './components/RunView.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 import Sidebar from './components/Sidebar.vue'
 import { isMac, modKey } from './lib/format'
-import { goHome, init, newTask, setAi, shownAi, store } from './lib/store'
+import { bothAi, goHome, init, newTask, setAi, shownAi, store } from './lib/store'
 
 onMounted(init)
 
@@ -67,6 +67,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
         </button>
         <span class="spacer" />
         <div
+          v-if="bothAi"
           class="seg ai"
           title="Кто работает по умолчанию"
         >

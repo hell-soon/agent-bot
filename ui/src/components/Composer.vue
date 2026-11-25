@@ -2,7 +2,7 @@
 import type { Mode } from '../lib/store'
 import { computed, nextTick, ref, watch } from 'vue'
 import { aiName, modKey } from '../lib/format'
-import { enabledSkills, loadCodex, MODES, setMode, startJob, store } from '../lib/store'
+import { bothAi, enabledSkills, loadCodex, MODES, setMode, startJob, store } from '../lib/store'
 import Icon from './Icon.vue'
 
 const c = store.compose
@@ -294,7 +294,10 @@ function onKey(e: KeyboardEvent) {
       v-if="extraOpen"
       class="extra"
     >
-      <div class="row">
+      <div
+        v-if="bothAi"
+        class="row"
+      >
         <span class="small">ИИ</span>
         <select v-model="ai">
           <option value="">
