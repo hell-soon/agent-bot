@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { isActive, startOfDay, STATUS } from '../lib/format'
-import { checkLimits, newTask, select, setRepo, store } from '../lib/store'
+import { checkLimits, newTask, otherActive, repoRuns, select, setRepo, store } from '../lib/store'
 import Icon from './Icon.vue'
 import Limits from './Limits.vue'
 
 const showAll = ref(false)
 const groups = computed(() => {
   const day = startOfDay()
-  const active = store.runs.filter(isActive)
-  const rest = store.runs.filter(r => !isActive(r))
+  const active = [...repoRuns.value.filter(isActive), ...otherActive.value]
+  const rest = repoRuns.value.filter(r => !isActive(r))
   const today = rest.filter(r => (r.endedAt || r.createdAt) >= day)
   const older = rest.filter(r => (r.endedAt || r.createdAt) < day)
   return {
@@ -21,7 +21,6 @@ const groups = computed(() => {
       : older.slice(0, 12),
   }
 })
-const multi = computed(() => store.repos.length > 1)
 const checking = ref(false)
 async function refresh() { checking.value = true; await checkLimits(); checking.value = false }
 </script>
@@ -85,7 +84,7 @@ async function refresh() { checking.value = true; await checkLimits(); checking.
               class="tag"
             >Codex</span>
             <span
-              v-if="multi && r.repo && r.repo !== store.curRepo"
+              v-if="r.repo !== store.curRepo"
               class="tag"
             >{{ r.repo.split('/')[1] }}</span>
           </div>
@@ -99,10 +98,10 @@ async function refresh() { checking.value = true; await checkLimits(); checking.
         Ещё {{ groups.older.length - 12 }}
       </button>
       <div
-        v-if="!store.runs.length"
+        v-if="!groups.active.length && !groups.today.length && !groups.older.length"
         class="small empty"
       >
-        Задач пока нет
+        В {{ store.curRepo.split('/')[1] }} задач пока нет
       </div>
     </div>
 

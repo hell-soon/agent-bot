@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { aiName, greeting, modKey, money, startOfDay, tok } from '../lib/format'
-import { newTask, resetRepo, runAction, select, shownAi, startJob, store, toast } from '../lib/store'
+import { newTask, repoRuns, resetRepo, runAction, select, shownAi, startJob, store, toast } from '../lib/store'
 import Composer from './Composer.vue'
 import Icon from './Icon.vue'
 
@@ -17,7 +17,7 @@ interface Card {
 
 const cards = computed<Card[]>(() => {
   const out: Card[] = []
-  for (const r of store.runs.filter(r => r.status === 'waiting').slice(0, 3)) {
+  for (const r of repoRuns.value.filter(r => r.status === 'waiting').slice(0, 3)) {
     out.push({
       kind: 'wait',
       dot: '',
@@ -26,7 +26,7 @@ const cards = computed<Card[]>(() => {
       run: r,
     })
   }
-  for (const r of store.runs.filter(r => r.status === 'failed' || r.status === 'limited').slice(0, 2)) {
+  for (const r of repoRuns.value.filter(r => r.status === 'failed' || r.status === 'limited').slice(0, 2)) {
     out.push({
       kind: 'fail',
       dot: r.status === 'limited'
@@ -64,7 +64,7 @@ const cards = computed<Card[]>(() => {
 })
 const stats = computed(() => {
   const day = startOfDay(); const t = store.today || {}
-  const todays = store.runs.filter(r => (r.endedAt || r.startedAt || r.createdAt) >= day)
+  const todays = repoRuns.value.filter(r => (r.endedAt || r.startedAt || r.createdAt) >= day)
   return [
     [todays.length, 'задач сегодня'],
     [todays.filter(r => r.prUrl).length, 'PR'],

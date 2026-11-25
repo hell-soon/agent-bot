@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { ago, aiName, isMac, kindIcon, STATUS } from '../lib/format'
-import { checkLimits, enabledSkills, goHome, newTask, select, setAi, setRepo, startJob, store, toast } from '../lib/store'
+import { checkLimits, enabledSkills, goHome, newTask, repoRuns, select, setAi, setRepo, startJob, store, toast } from '../lib/store'
 import Icon from './Icon.vue'
 
 interface Item { icon: string, dot?: string, title: string, em?: string, hint?: string, keys?: string, run: () => void }
@@ -76,12 +76,12 @@ const groups = computed(() => {
     ])
   }
   push('Скиллы', skillItems)
-  push(query ? 'Задачи' : 'Недавние задачи', store.runs.filter(r => !query || matches(query, r.title, STATUS[r.status], r.ai)).slice(0, query ? 8 : 5)
+  push(query ? 'Задачи' : 'Недавние задачи', (query ? store.runs : repoRuns.value).filter(r => !query || matches(query, r.title, STATUS[r.status], r.ai, r.repo)).slice(0, query ? 8 : 5)
     .map(r => ({
       icon: kindIcon(r.kind),
       dot: r.status,
       title: r.title,
-      hint: `${STATUS[r.status] || ''} · ${ago(r.endedAt || r.startedAt || r.createdAt)}`,
+      hint: `${r.repo !== store.curRepo ? `${r.repo?.split('/')[1]} · ` : ''}${STATUS[r.status] || ''} · ${ago(r.endedAt || r.startedAt || r.createdAt)}`,
       run: go(() => select(r.id)),
     })))
   if (query) {

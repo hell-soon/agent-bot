@@ -1,6 +1,43 @@
 // Цвет — по ИИ на экране: Claude — терракота на тёплом, Codex — чёрно-белый.
 // Темы — html[data-ai] + prefers-color-scheme. Компоненты берут только переменные.
 
+// Шрифт — Maple Mono (github.com/subframe7536/maple-font, OFL), с кириллицей
+@font-face {
+  font-family: 'Maple Mono';
+  src: url('../assets/fonts/MapleMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Maple Mono';
+  src: url('../assets/fonts/MapleMono-Italic.woff2') format('woff2');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Maple Mono';
+  src: url('../assets/fonts/MapleMono-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Maple Mono';
+  src: url('../assets/fonts/MapleMono-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Maple Mono';
+  src: url('../assets/fonts/MapleMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 @mixin claude-light {
   --bg: #f5f4ef;
   --side: #efede6;
@@ -73,14 +110,10 @@
   --bad-soft: #f9e6e2;
   --warn: #a86a00;
   --warn-soft: #f8eed8;
-  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-family:
-    'Inter Variable',
-    Inter,
-    -apple-system,
-    system-ui,
-    sans-serif;
-  font-size: 14px;
+  --mono: 'Maple Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-feature-settings: 'calt' 1;
   -webkit-font-smoothing: antialiased;
 }
 :root[data-ai='claude'] {

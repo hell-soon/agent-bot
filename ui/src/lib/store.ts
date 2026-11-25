@@ -93,6 +93,10 @@ export const store = reactive({
 })
 store.compose.showMore = !!MODES[store.compose.mode].more
 
+// История текущего проекта; чужие — только идущие сейчас (очередь общая)
+export const repoRuns = computed(() => store.runs.filter(r => r.repo === store.curRepo))
+export const otherActive = computed(() => store.runs.filter(r => r.repo !== store.curRepo && ['queued', 'running', 'waiting', 'limited'].includes(r.status)))
+
 export const selectedRun = computed(() => store.runs.find(r => r.id === store.selected) || null)
 // ИИ, который сейчас на экране: у открытой задачи — её, иначе — по умолчанию
 export const shownAi = computed<Ai>(() => (selectedRun.value
@@ -119,6 +123,9 @@ function readHash() {
 }
 window.addEventListener('popstate', readHash)
 export function select(id: string) {
+  const r = store.runs.find(x => x.id === id)
+  if (r?.repo && r.repo !== store.curRepo && store.repos.includes(r.repo))
+    setRepo(r.repo)
   store.selected = id
   store.sbOpen = false
   history.pushState(null, '', `#${id}`)
@@ -248,6 +255,9 @@ export async function init() {
       ? s.repo
       : store.repos[0] || ''
   readHash()
+  const opened = store.runs.find(r => r.id === store.selected)
+  if (opened?.repo && store.repos.includes(opened.repo))
+    store.curRepo = opened.repo
   store.ready = true
   loadGh(); checkRepo(); loadCodex(); loadSkills()
   const live = new EventSource('/api/events')

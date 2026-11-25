@@ -36,6 +36,9 @@ catch {}
 for (const r of runs) {
   if (r.status === 'running')
     r.status = 'stopped'
+  // старые задачи без репозитория — из репозитория по умолчанию (история у каждого проекта своя)
+  if (!isRepo(r.repo) && DEFAULT_REPO)
+    r.repo = DEFAULT_REPO
 }
 const save = () => fs.writeFileSync(STATE, JSON.stringify(runs, null, 1))
 const byId = id => runs.find(r => r.id === id)
@@ -243,6 +246,7 @@ function newRun(fields) {
     turns: 0,
     ...fields,
   }
+  run.repo = repoOf(run.repo)
   runs.push(run)
   return run
 }
