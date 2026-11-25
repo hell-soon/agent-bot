@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { ago, aiName, isMac, kindIcon, STATUS } from '../lib/format'
-import { checkLimits, goHome, newTask, select, setAi, setRepo, startJob, store, toast } from '../lib/store'
+import { checkLimits, enabledSkills, goHome, newTask, select, setAi, setRepo, startJob, store, toast } from '../lib/store'
 import Icon from './Icon.vue'
 
 interface Item { icon: string, dot?: string, title: string, em?: string, hint?: string, keys?: string, run: () => void }
@@ -34,6 +34,24 @@ const groups = computed(() => {
     if (items.length)
       out.push({ title, items })
   }
+  // «/имя» — сразу скиллы; иначе скиллы ищутся среди прочего
+  const sq = query.replace(/^\//, '')
+  const skillItems = query
+    ? enabledSkills.value.filter(s => matches(sq, s.name, query.startsWith('/')
+        ? ''
+        : s.description)).slice(0, query.startsWith('/')
+        ? 10
+        : 4).map(s => ({
+        icon: 'idea',
+        title: `/${s.name}`,
+        hint: s.description.slice(0, 60),
+        run: go(() => newTask('task', `/${s.name} `)),
+      }))
+    : []
+  if (query.startsWith('/')) {
+    push('Скиллы', skillItems)
+    return out
+  }
   if (query) {
     push('Поручить боту', [
       {
@@ -57,6 +75,7 @@ const groups = computed(() => {
       },
     ])
   }
+  push('Скиллы', skillItems)
   push(query ? 'Задачи' : 'Недавние задачи', store.runs.filter(r => !query || matches(query, r.title, STATUS[r.status], r.ai)).slice(0, query ? 8 : 5)
     .map(r => ({
       icon: kindIcon(r.kind),
@@ -162,8 +181,32 @@ const groups = computed(() => {
     {
       icon: 'mem',
       title: 'Память бота',
-      k: 'memory правила',
+      k: 'memory',
       run: go(() => { store.drawer = 'memory' }),
+    },
+    {
+      icon: 'idea',
+      title: 'Скиллы бота',
+      k: 'skills установить github',
+      run: go(() => { store.drawer = 'skills' }),
+    },
+    {
+      icon: 'tickets',
+      title: 'Правила бота',
+      k: 'rules инструкции',
+      run: go(() => { store.drawer = 'rules' }),
+    },
+    {
+      icon: 'limit',
+      title: 'Разрешения команд',
+      k: 'permissions bun pnpm',
+      run: go(() => { store.drawer = 'perms' }),
+    },
+    {
+      icon: 'home',
+      title: 'Настройки репозитория',
+      k: 'ветка проверки pr авторабота auto',
+      run: go(() => { store.drawer = 'repo' }),
     },
     {
       icon: 'limit',

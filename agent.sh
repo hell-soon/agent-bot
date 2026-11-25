@@ -25,7 +25,7 @@ usage() { cat <<'EOF'
 bot ui                  панель в браузере: запуск задач кнопками, живая лента, очередь (bot ui stop — выключить)
 bot                     обычная сессия от имени бота
 bot 5                   сделать issue #5 (вы смотрите и разрешаете действия)
-bot q 5 6 7             очередь: issue по очереди, сам и без вопросов, каждое — свой PR от main
+bot q 5 6 7             очередь: issue по очереди, сам и без вопросов, каждое — свой PR от базовой ветки
 bot chain 5 6 7         то же, но каждое следующее — поверх предыдущего (тикеты зависят друг от друга)
 bot q ready             очередь из всех открытых issue с меткой ready-for-agent
 bot pr 7                поправить PR #7 по комментариям ревью и упавшим проверкам
@@ -109,7 +109,7 @@ fresh_main() { # чистый main с GitHub; несохранённое от п
     read -r -p "Отбросить их? [y/N] " a; [ "$a" = y ] || exit 1
     git reset -q --hard && git clean -qfd
   fi
-  git fetch -q origin && git checkout -q main && git reset -q --hard origin/main
+  git fetch -q origin && git checkout -q "$BASE" && git reset -q --hard "origin/$BASE"
 }
 
 REPO=${BOT_REPO:-}
@@ -121,18 +121,51 @@ WORK="$BOT_DIR/work/${REPO//\//__}"
 # прежняя раскладка (work/<имя>) — переносим один раз
 [ ! -d "$WORK" ] && [ -d "$BOT_DIR/work/${REPO#*/}/.git" ] && mv "$BOT_DIR/work/${REPO#*/}" "$WORK"
 
-PROMPT="Ты работаешь как бот $BOT_NAME в репозитории $REPO.
-Правила:
-- Никогда не коммить в main. Если ветка уже создана за тебя — работай в ней, иначе создай agent/<кратко>.
-- Если есть docs/agents/*.md — там настройки скиллов mattpocock-skills (трекер, метки, доменные документы).
-- Экономь контекст и шаги: ищи Grep-ом и читай нужные куски (Read с offset/limit), не файлы целиком; не перечитывай прочитанное; подагентов (Task) — только для широкого поиска по многим местам.
-- Правила проекта — в AGENTS.md / CLAUDE.md; если есть docs/features/<раздел>.md — сначала прочитай нужный.
-- Проверки — те, что описаны в AGENTS.md / CLAUDE.md (иначе скрипты package.json: typecheck, lint, test, build), один раз в конце, по одной команде, вывод через | tail -n 40. Упало — чини и перезапусти только упавшую. Нет зависимостей — поставь (npm ci / pnpm i --frozen-lockfile).
-- PR открывай через gh pr create, описание — по-русски: что сделано, как проверено. В конце описания — Closes #N, если задача из issue.
-- Без Co-Authored-By и «Generated with Claude Code» в коммитах и PR — автор и так бот.
+# Настройки этого репозитория из панели: config.json → repos["owner/repo"]
+rcfg() { jq -r --arg r "$REPO" ".repos[\$r]$1 // empty" "$CONFIG" 2>/dev/null || true; }
+# Базовая ветка: из настроек репозитория, иначе ветка по умолчанию на GitHub
+BASE=${BOT_BASE:-$(rcfg .base)}
+if [ -z "$BASE" ] && [ -d "$WORK/.git" ]; then BASE=$(git -C "$WORK" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##'); fi
+[ -z "$BASE" ] && BASE=$(gh api "repos/$REPO" --jq .default_branch 2>/dev/null || true)
+BASE=${BASE:-main}
+
+PROMPT="Ты работаешь как бот $BOT_NAME в репозитории $REPO, базовая ветка — $BASE.
+Обязательные правила:
+- Никогда не коммить и не пушь в $BASE. Если ветка уже создана за тебя — работай в ней, иначе создай agent/<кратко>.
+- PR открывай через gh pr create --base $BASE. Без Co-Authored-By и «Generated with Claude Code» в коммитах и PR — автор и так бот.
 - Команды запускай по одной: без ;, &&, ||, \$? и подстановок \$(...) — в фоновом режиме составные команды запрещены и только тратят шаги. Длинный вывод — через | tail -n 30.
+- Экономь контекст и шаги: ищи Grep-ом и читай нужные куски (Read с offset/limit), не файлы целиком; не перечитывай прочитанное; подагентов (Task) — только для широкого поиска.
+- Не трогай .env* и секреты. Не делай merge и force push — PR смотрит владелец."
+
+# Правила владельца (панель → Настройки → Правила): общие и для этого репозитория
+RULES_DIR="$BOT_DIR/rules"; mkdir -p "$RULES_DIR"
+if [ ! -f "$RULES_DIR/_global.md" ]; then cat > "$RULES_DIR/_global.md" <<'RULES'
+- Правила проекта — в AGENTS.md / CLAUDE.md; если есть docs/features/<раздел>.md — сначала прочитай нужный. Если есть docs/agents/*.md — там настройки скиллов (трекер, метки, доменные документы).
+- Проверки — те, что описаны в AGENTS.md / CLAUDE.md (иначе скрипты package.json: typecheck, lint, test, build), один раз в конце, по одной команде, вывод через | tail -n 40. Упало — чини и перезапусти только упавшую. Нет зависимостей — поставь (npm ci / pnpm i --frozen-lockfile / bun install).
+- Описание PR — по-русски: что сделано, как проверено. В конце — Closes #N, если задача из issue.
 - Создаёшь или разбираешь issue (/to-tickets, /triage) — ставь метку размера: size:s (минуты, 1–2 файла), size:m (обычная задача), size:l (много файлов, новая логика).
-- Не трогай .env* и секреты. Не делай merge сам — PR смотрит владелец."
+RULES
+fi
+RULES_REPO="$RULES_DIR/${REPO//\//__}.md"
+PROMPT="$PROMPT
+
+## Правила владельца
+$(cat "$RULES_DIR/_global.md")"
+[ -s "$RULES_REPO" ] && PROMPT="$PROMPT
+
+## Правила для $REPO
+$(cat "$RULES_REPO")"
+# Настройки репозитория, которые меняют работу с PR и проверками
+X=$(rcfg .checks); [ -n "$X" ] && PROMPT="$PROMPT
+- Проверки в этом репозитории (вместо любых других): $X"
+[ "$(rcfg .draft)" = true ] && PROMPT="$PROMPT
+- PR открывай черновиком: gh pr create --draft"
+X=$(rcfg .reviewers); [ -n "$X" ] && PROMPT="$PROMPT
+- Добавь ревьюеров PR: --reviewer $X"
+X=$(rcfg .labels); [ -n "$X" ] && PROMPT="$PROMPT
+- Поставь PR метки: --label $X"
+X=$(jq -r '[.denyCmds[]?] | join(", ")' "$CONFIG" 2>/dev/null); [ -n "$X" ] && PROMPT="$PROMPT
+- Никогда не запускай: $X"
 
 export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1   # одна память — наш файл, без встроенной автопамяти
 # Память бота по репозиторию: что он узнал в прошлых задачах. Вне репозитория — не попадает в PR.
@@ -149,11 +182,13 @@ $(head -c 6000 "$MEMORY_FILE")
 
 # Только нужное: настройки проекта (без ваших личных плагинов, SEO/Figma-скиллов, MCP, хуков),
 # скиллы Мэтта Покока — отдельно; одинаковый системный промпт у всех запусков → старт берётся из кэша.
-MPS_PLUGIN=$(ls -d "$HOME"/.claude/plugins/cache/claude-plugins-official/mattpocock-skills/*/ 2>/dev/null | sort -V | tail -1)
+# Скиллы — собранный плагин .skills (панель → Настройки → Скиллы: вкл/выкл, установка из GitHub)
+[ -d "$BOT_DIR/.skills/skills" ] || node "$BOT_DIR/ui/skills.mjs" build >/dev/null 2>&1 || true
+SKILLS_DIR="$BOT_DIR/.skills"
 SETTINGS='{"attribution":{"commit":"","pr":""},"includeCoAuthoredBy":false,"env":{"ENABLE_TOOL_SEARCH":"auto:5","CLAUDE_AUTOCOMPACT_PCT_OVERRIDE":"85","CLAUDE_CODE_DISABLE_AUTO_MEMORY":"1","CLAUDE_CODE_SUBAGENT_MODEL":"haiku","BASH_MAX_OUTPUT_LENGTH":"15000"},"autoMemoryEnabled":false}'
 OPTS=(--append-system-prompt "$PROMPT" --settings "$SETTINGS"
   --strict-mcp-config --setting-sources project,local --exclude-dynamic-system-prompt-sections)
-[ -n "$MPS_PLUGIN" ] && OPTS+=(--plugin-dir "$MPS_PLUGIN")
+[ -d "$SKILLS_DIR/skills" ] && OPTS+=(--plugin-dir "$SKILLS_DIR" --add-dir "$SKILLS_DIR")
 OPTS+=(--add-dir "$MEMORY_DIR")   # чтобы бот мог дописывать память без вопросов
 
 # Справочные репозитории (--ref / BOT_REFS): свежая копия только для чтения в refs/
@@ -177,19 +212,19 @@ if [ -n "$BOT_REFS" ]; then
   OPTS[1]="$PROMPT"   # обновить --append-system-prompt
 fi
 # Какой ИИ работает: claude (по умолчанию) или codex. BOT_AI=codex bot … — разово; в панели — ⚙ или у задачи.
-AI=${BOT_AI:-$(cfg .ai)}; AI=${AI:-claude}
+AI=${BOT_AI:-$(rcfg .ai)}; AI=${AI:-$(cfg .ai)}; AI=${AI:-claude}
 case "$AI" in claude|codex) ;; *) echo "Неизвестный ИИ: $AI (claude | codex)" >&2; exit 1 ;; esac
 ADAPTER="$BOT_DIR/ui/codex-adapter.mjs"
 
 model_opts() { # cheap — значения по умолчанию для тикетов
   local m="$BOT_MODEL" e="$BOT_EFFORT"
   if [ "$AI" = codex ]; then   # у Codex свои модели и усилия (настройки codex*), размер задачи меняет только усилия
-    if [ "$1" = cheap ]; then CODEX_MODEL=${BOT_CODEX_MODEL:-$(cfg .codexModel)}; e=${e:-$(cfg .codexEffort)}
+    if [ "$1" = cheap ]; then CODEX_MODEL=${BOT_CODEX_MODEL:-$(rcfg .codexModel)}; CODEX_MODEL=${CODEX_MODEL:-$(cfg .codexModel)}; e=${e:-$(cfg .codexEffort)}
     else CODEX_MODEL=${BOT_CODEX_MODEL:-$(cfg .codexChatModel)}; CODEX_MODEL=${CODEX_MODEL:-$(cfg .codexModel)}; e=${e:-$(cfg .codexChatEffort)}; fi
     export CODEX_MODEL; [ -n "$e" ] && export CODEX_EFFORT="$e"
     return 0
   fi
-  if [ "$1" = cheap ]; then m=${m:-$(cfg .ticketModel)}; m=${m:-sonnet}; e=${e:-$(cfg .ticketEffort)}; e=${e:-medium}
+  if [ "$1" = cheap ]; then m=${m:-$(rcfg .ticketModel)}; m=${m:-$(cfg .ticketModel)}; m=${m:-sonnet}; e=${e:-$(cfg .ticketEffort)}; e=${e:-medium}
   else m=${m:-$(cfg .chatModel)}; e=${e:-$(cfg .chatEffort)}; fi
   if [ "$AI" = codex ]; then   # имена моделей Claude Codex не подходят — своя модель из настроек
     CODEX_MODEL=${BOT_CODEX_MODEL:-$(cfg .codexModel)}; export CODEX_MODEL
@@ -220,7 +255,7 @@ to_codex() {
   local t="$1" s rest p
   if [[ "$t" =~ ^/([a-z0-9-]+)(.*)$ ]]; then
     s=${BASH_REMATCH[1]}; rest=${BASH_REMATCH[2]}
-    p=$(find "$MPS_PLUGIN/skills" -path "*/$s/SKILL.md" 2>/dev/null | head -1)
+    p="$SKILLS_DIR/skills/$s/SKILL.md"; [ -f "$p" ] || p=$(find "$WORK/.claude/skills" -path "*/$s/SKILL.md" 2>/dev/null | head -1)
     [ -n "$p" ] && t="Прочитай и выполни инструкцию скилла из файла $p (упомянутые там инструменты Claude Code заменяй своими аналогами: вопросы человеку — текстом).$rest"
   fi
   printf '%s' "$t"
@@ -243,8 +278,8 @@ $(to_codex "$1")"
     else node "$ADAPTER" resume "$1" "$(to_codex "$2")"; fi
   else
     local extra=(); [ "$panel" = 1 ] && extra=(--append-system-prompt "$PANEL_PROMPT")
-    if [ "$mode" = new ]; then claude "${AUTO[@]}" "${STREAM[@]}" "${OPTS[@]}" "${extra[@]}" "$1"
-    else claude "${AUTO[@]}" "${STREAM[@]}" "${OPTS[@]}" "${extra[@]}" --resume "$1" "$2"; fi
+    if [ "$mode" = new ]; then claude "${AUTO[@]}" "${STREAM[@]}" "${OPTS[@]}" "${extra[@]}" -- "$1"
+    else claude "${AUTO[@]}" "${STREAM[@]}" "${OPTS[@]}" "${extra[@]}" --resume "$1" -- "$2"; fi
   fi
 }
 # Интерактивно в терминале
@@ -257,7 +292,7 @@ ai_tty() {
 ## Задача
 $(to_codex "${1:-Жди задачу от владельца.}")"
   fi
-  if [ -n "$1" ]; then exec claude "${OPTS[@]}" "$1"; else exec claude "${OPTS[@]}"; fi
+  if [ -n "$1" ]; then exec claude "${OPTS[@]}" -- "$1"; else exec claude "${OPTS[@]}"; fi
 }
 
 # Без вопросов: только git/gh/npm/node и правка файлов в копии репозитория
@@ -267,8 +302,11 @@ AUTO=(-p --permission-mode acceptEdits
     "Bash(ls:*)" "Bash(cat:*)" "Bash(grep:*)" "Bash(rg:*)" "Bash(find:*)" "Bash(sed -n:*)"
     "Bash(head:*)" "Bash(tail:*)" "Bash(wc:*)" "Bash(mkdir:*)" "Bash(curl -s http://127.0.0.1:*)"
     "Bash(jq:*)" "Bash(sort:*)" "Bash(uniq:*)" "Bash(diff:*)" "Bash(test:*)" "Bash(pwd)" "Bash(echo:*)"
-  --disallowedTools "Bash(git push --force:*)" "Bash(git push -f:*)" "Bash(git push origin main:*)"
+  --disallowedTools "Bash(git push --force:*)" "Bash(git push -f:*)" "Bash(git push origin $BASE:*)" "Bash(git push --force-with-lease:*)"
     "Bash(gh pr merge:*)" "Bash(gh repo delete:*)" "Bash(gh api -X DELETE:*)" "AskUserQuestion")
+# Свои разрешения (панель → Настройки → Разрешения): allowCmds / denyCmds — начала команд
+while IFS= read -r c; do [ -n "$c" ] && AUTO+=(--allowedTools "Bash($c:*)"); done < <(jq -r '.allowCmds[]? // empty' "$CONFIG" 2>/dev/null)
+while IFS= read -r c; do [ -n "$c" ] && AUTO+=(--disallowedTools "Bash($c:*)"); done < <(jq -r '.denyCmds[]? // empty' "$CONFIG" 2>/dev/null)
 STREAM=(--output-format stream-json --verbose)
 # Предохранитель: фоновая задача не потратит больше $BOT_BUDGET (по умолчанию $8) — дальше остановится, работу можно «Продолжить»
 B=${BOT_BUDGET:-$(cfg .budget)}; AUTO+=(--max-budget-usd "${B:-8}")
@@ -288,8 +326,12 @@ issue_task() { # $1 — номер, $2 — ветка, $3 — база
   [ "$SIZE" = l ] && review="Перед PR — /code-review изменений относительно $3 и исправь найденное."
   echo "/implement issue #$1 (gh issue view $1). Работай в уже созданной ветке $2. $review Потом запушь ветку (git push -u origin $2) и открой PR: gh pr create --base $3 --head $2. Вопросов не задавай — решай сам и опиши решения в PR. Если задачу сделать нельзя — напиши причину комментарием в issue (gh issue comment $1) и остановись."
 }
-pr_task() { # $1 — номер PR, $2… — что поправить (пусто — по ревью)
+pr_task() { # $1 — номер PR, $2… — что поправить (пусто — по ревью; @ci — упавшие проверки; @conflicts — конфликт с базой)
   local n=$1; shift
+  case "$*" in
+    @ci) echo "Почини упавшие проверки PR #$n (ты уже в его ветке): gh pr checks $n, логи упавших — gh run view <id> --log-failed | tail -n 80. Исправь причину, проверь локально, закоммить и запушь. Если падение не связано с изменениями PR — напиши об этом комментарием в PR и остановись."; return ;;
+    @conflicts) echo "У PR #$n конфликт с $BASE (ты уже в его ветке). Влей свежую базу: git fetch origin, git merge origin/$BASE, разреши конфликты по смыслу обеих сторон, проверь, закоммить и запушь (без force push). Опиши в комментарии к PR, как разрешил."; return ;;
+  esac
   if [ -n "$*" ]; then echo "Поправь PR #$n (ты уже в его ветке): $*. Проверь, закоммить и запушь."
   else echo "Поправь PR #$n (ты уже в его ветке): прочитай ревью и комментарии (gh pr view $n --comments, gh api repos/$REPO/pulls/$n/comments) и упавшие проверки (gh pr checks $n), исправь, проверь, закоммить и запушь. Ответь на комментарии, что сделано."; fi
 }
@@ -301,13 +343,13 @@ finish_issue() { # $1 — номер, $2 — ветка: метки, поиск 
   keep_wip "$2"
   gh issue edit "$1" -R "$REPO" --remove-label in-progress >/dev/null 2>&1 || true
   local pr; pr=$(gh pr list -R "$REPO" --head "$2" --state all --json url --jq '.[0].url' 2>/dev/null || true)
-  git checkout -q main
+  git checkout -q "$BASE"
   printf '{"type":"bot_result","branch":"%s","pr":"%s"}\n' "$2" "$pr"
 }
 start_issue_branch() { # $1 — номер, $2 — база; печатает имя ветки
   local br="agent/issue-$1"
   git fetch -q origin
-  if [ "$2" = main ]; then git checkout -q -B "$br" origin/main; else git checkout -q -B "$br" "origin/$2"; fi
+  git checkout -q -B "$br" "origin/$2"
   echo "$br"
 }
 
@@ -328,16 +370,16 @@ case "$1" in
     if [ "$st" = CLOSED ]; then
       printf '{"type":"bot_result","closed":true,"text":"Issue #%s уже закрыт — делать нечего"}\n' "$2"; exit 0
     fi
-    br=$(start_issue_branch "$2" "${3:-main}")
+    br=$(start_issue_branch "$2" "${3:-$BASE}")
     gh issue edit "$2" -R "$REPO" --add-label in-progress --remove-label ready-for-agent >/dev/null 2>&1 || true
-    ai_run new 0 "$(issue_task "$2" "$br" "${3:-main}")" || true
+    ai_run new 0 "$(issue_task "$2" "$br" "${3:-$BASE}")" || true
     finish_issue "$2" "$br"; exit 0 ;;
   _pr)     # _pr N [текст]
     setup_repo; fresh_main; model_opts cheap
     gh pr checkout -R "$REPO" "$2" >/dev/null
     br=$(git branch --show-current)
     ai_run new 0 "$(pr_task "$2" "${@:3}")" || true
-    keep_wip "$br"; git checkout -q main
+    keep_wip "$br"; git checkout -q "$BASE"
     printf '{"type":"bot_result","branch":"%s"}\n' "$br"; exit 0 ;;
   _continue) # _continue SESSION BRANCH ISSUE — продолжить прерванную работу (сбой, лимит) в той же сессии
     setup_repo; model_opts cheap
@@ -345,7 +387,7 @@ case "$1" in
     git log -1 --format=%s | grep -q '^WIP бота' && git reset -q --soft HEAD~1   # вернуть незаконченное в рабочую копию
     ai_run resume 0 "$2" \
       "Работа прервалась (сбой связи или лимит). Продолжай с того места, где остановился: сначала git status и git log, чтобы понять, что уже сделано, потом доделай задачу до конца (проверки, push, PR)." || true
-    if [ -n "$4" ]; then finish_issue "$4" "$3"; else keep_wip "$3"; git checkout -q main; printf '{"type":"bot_result","branch":"%s"}\n' "$3"; fi
+    if [ -n "$4" ]; then finish_issue "$4" "$3"; else keep_wip "$3"; git checkout -q "$BASE"; printf '{"type":"bot_result","branch":"%s"}\n' "$3"; fi
     exit 0 ;;
   _new)    # _new "задача" — начало разговора (обсуждение, баг, разбор, свободная задача)
     setup_repo; fresh_main; model_opts
@@ -355,10 +397,10 @@ case "$1" in
     ai_run resume 1 "$2" "$3"; exit 0 ;;
   _wip)    # после остановки: незаконченное — коммитом «WIP бота» в ветку задачи, копия — снова на main
     setup_repo; br=$(git branch --show-current)
-    if [ -n "$br" ] && [ "$br" != main ]; then keep_wip "$br" >/dev/null || true; git checkout -q main 2>/dev/null || true; fi
+    if [ -n "$br" ] && [ "$br" != "$BASE" ]; then keep_wip "$br" >/dev/null || true; git checkout -q "$BASE" 2>/dev/null || true; fi
     exit 0 ;;
   _status) setup_repo; git status --short; exit 0 ;;
-  _reset)  setup_repo; git reset -q --hard && git clean -qfd && git checkout -q main; echo ok; exit 0 ;;
+  _reset)  setup_repo; git reset -q --hard && git clean -qfd && git checkout -q "$BASE"; echo ok; exit 0 ;;
 esac
 
 # ---------- команды из терминала ----------
@@ -366,7 +408,7 @@ setup_repo; fresh_main
 
 run_queue() { # $1 = q | chain, дальше номера issue
   local mode=$1; shift
-  local ids=("$@") base=main ok="" failed=""
+  local ids=("$@") base=$BASE ok="" failed=""
   if [ "${ids[0]}" = ready ]; then
     ids=($(gh issue list -R "$REPO" --label ready-for-agent --state open --json number --jq 'sort_by(.number) | .[].number'))
     [ ${#ids[@]} -eq 0 ] && { echo "Нет открытых issue с меткой ready-for-agent"; exit 0; }
@@ -392,7 +434,7 @@ run_queue() { # $1 = q | chain, дальше номера issue
     fi
     git reset -q --hard && git clean -qfd
   done
-  git checkout -q main
+  git checkout -q "$BASE"
   local msg="Готово:${ok:- ничего}${failed:+; не вышло:$failed}"
   echo "$msg"
   osascript -e "display notification \"$msg\" with title \"bot\"" 2>/dev/null || true

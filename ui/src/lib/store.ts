@@ -53,6 +53,9 @@ export const MODES: Record<Mode, { name: string, ph?: string, hint: string, more
   },
 }
 
+export type DrawerPage = 'main' | 'memory' | 'repo' | 'skills' | 'rules' | 'perms'
+export interface Skill { id: string, name: string, description: string, manual: boolean, source: string, sourceLabel: string, group: string, enabled: boolean, readonly: boolean }
+
 const savedMode = ls.get('bot:mode') as Mode | null
 export const store = reactive({
   ready: false,
@@ -82,7 +85,8 @@ export const store = reactive({
     prPick: '',
   },
   // окна
-  drawer: null as null | 'main' | 'memory',
+  drawer: null as null | DrawerPage,
+  skills: [] as Skill[],
   palette: false,
   sbOpen: false,
   toast: '',
@@ -201,11 +205,21 @@ export async function runAction(id: string, act: string) {
   catch (e: any) { toast(e.message) }
 }
 export async function reply(id: string, text: string) { await api(`/api/runs/${id}/reply`, { text }) }
+// Скиллы бота (включённые — для подсказок «/» и поиска)
+export async function loadSkills() {
+  try { store.skills = (await api<{ skills: Skill[] }>(`/api/skills?repo=${encodeURIComponent(store.curRepo)}`)).skills }
+  catch { /* сервер старый или недоступен */ }
+}
+export const enabledSkills = computed(() => {
+  const seen = new Set<string>()
+  return store.skills.filter(s => s.enabled && !seen.has(s.name) && seen.add(s.name))
+})
+
 export function setRepo(r: string) {
   store.curRepo = r
   ls.set('bot:repo', r)
   store.gh = { issues: [], prs: [] }
-  loadGh(); checkRepo()
+  loadGh(); checkRepo(); loadSkills()
 }
 
 // ---------- старт и живое состояние ----------
@@ -235,7 +249,7 @@ export async function init() {
       : store.repos[0] || ''
   readHash()
   store.ready = true
-  loadGh(); checkRepo(); loadCodex()
+  loadGh(); checkRepo(); loadCodex(); loadSkills()
   const live = new EventSource('/api/events')
   live.onmessage = (m) => {
     const d = JSON.parse(m.data)

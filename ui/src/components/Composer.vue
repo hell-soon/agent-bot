@@ -2,7 +2,7 @@
 import type { Mode } from '../lib/store'
 import { computed, nextTick, ref, watch } from 'vue'
 import { aiName, modKey } from '../lib/format'
-import { loadCodex, MODES, setMode, startJob, store } from '../lib/store'
+import { enabledSkills, loadCodex, MODES, setMode, startJob, store } from '../lib/store'
 import Icon from './Icon.vue'
 
 const c = store.compose
@@ -88,7 +88,51 @@ async function submit() {
   catch (e: any) { err.value = e.message }
   finally { busy.value = false }
 }
-function onKey(e: KeyboardEvent) { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit() } }
+// Подсказки скиллов: «/» в начале строки ввода → список, ↑↓ / Tab / ↵ — выбрать
+const slashSel = ref(0)
+const slash = computed(() => {
+  const m = c.draft.match(/^\/([\w:-]*)$/)
+  if (!m)
+    return []
+  const q = m[1].toLowerCase()
+  return enabledSkills.value
+    .filter(s => s.name.toLowerCase().includes(q) || (q.length > 2 && s.description.toLowerCase().includes(q)))
+    .sort((a, b) => Number(!a.name.startsWith(q)) - Number(!b.name.startsWith(q)) || Number(!a.manual) - Number(!b.manual))
+    .slice(0, 8)
+})
+watch(slash, () => { slashSel.value = 0 })
+function pickSlash(name: string) {
+  c.draft = `/${name} `
+  nextTick(() => {
+    ta.value?.focus()
+    fit()
+  })
+}
+function onKey(e: KeyboardEvent) {
+  if (slash.value.length && (e.target as HTMLElement).tagName === 'TEXTAREA') {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      const n = slash.value.length
+      slashSel.value = (slashSel.value + (e.key === 'ArrowDown'
+        ? 1
+        : -1) + n) % n
+      return
+    }
+    if ((e.key === 'Tab' || e.key === 'Enter') && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault()
+      pickSlash(slash.value[slashSel.value].name)
+      return
+    }
+    if (e.key === 'Escape') {
+      c.draft += ' '
+      return
+    }
+  }
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault()
+    submit()
+  }
+}
 </script>
 
 <template>
@@ -178,9 +222,25 @@ function onKey(e: KeyboardEvent) { if (e.key === 'Enter' && (e.metaKey || e.ctrl
       ref="ta"
       v-model="c.draft"
       rows="2"
-      :placeholder="m.ph"
+      :placeholder="`${m.ph}${c.mode === 'task' ? ' · «/» — скиллы' : ''}`"
       @input="fit"
     />
+    <div
+      v-if="slash.length"
+      class="slash"
+    >
+      <button
+        v-for="(s, i) in slash"
+        :key="s.id"
+        type="button"
+        class="sk"
+        :class="{ on: i === slashSel }"
+        @mousemove="slashSel = i"
+        @click="pickSlash(s.name)"
+      >
+        <span class="n">/{{ s.name }}</span><span class="d">{{ s.description }}</span>
+      </button>
+    </div>
 
     <div class="chips">
       <button
@@ -430,6 +490,45 @@ textarea {
 @media (max-width: 640px) {
   .bottom .small {
     display: none;
+  }
+}
+.slash {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--sunk);
+  max-height: 290px;
+  overflow: auto;
+  .sk {
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    text-align: left;
+    padding: 7px 10px;
+    border-radius: 8px;
+    &.on {
+      background: var(--card);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    }
+  }
+  .n {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--accent-text);
+    white-space: nowrap;
+  }
+  .d {
+    font-size: 12.5px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
   }
 }
 </style>

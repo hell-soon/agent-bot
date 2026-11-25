@@ -201,6 +201,11 @@ function act(a: string) {
           </button>
           <h2>{{ r.title }}</h2>
           <span
+            v-if="r.auto"
+            class="badge"
+            :title="`Поставлено авторабой: ${r.auto}`"
+          >авто</span>
+          <span
             class="badge"
             :class="r.status"
           >{{ STATUS[r.status] || r.status }}</span>

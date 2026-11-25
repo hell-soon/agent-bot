@@ -346,3 +346,183 @@ textarea {
 .bad-t {
   color: var(--bad);
 }
+
+// ---------- разделы настроек (общие для страниц выезжающей панели) ----------
+.grp {
+  padding: 16px 0 6px;
+  & + & {
+    border-top: 1px solid var(--line);
+  }
+  h4 {
+    margin: 0 0 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  > p.small {
+    margin: 0 0 8px;
+  }
+}
+.set {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  min-height: 44px;
+  .lbl {
+    flex: 1;
+    min-width: 0;
+    small {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+  }
+  > select,
+  > input:not([type='checkbox']) {
+    width: 190px;
+  }
+  > input[type='number'] {
+    width: 80px;
+  }
+}
+.line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  padding: 4px 0 8px;
+}
+.sw {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  flex: none;
+  input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    margin: 0;
+    cursor: pointer;
+    z-index: 1;
+  }
+  span {
+    position: absolute;
+    inset: 0;
+    border-radius: 99px;
+    background: var(--line);
+    transition: background 0.2s;
+    &::after {
+      content: '';
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform 0.2s;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    }
+  }
+  input:checked + span {
+    background: var(--accent);
+    &::after {
+      transform: translateX(16px);
+      background: var(--on-accent);
+    }
+  }
+}
+.nav-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 10px;
+  margin: 0 -10px;
+  border-radius: 10px;
+  width: calc(100% + 20px);
+  &:hover {
+    background: var(--sunk);
+  }
+  .ic {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    background: var(--sunk);
+    color: var(--muted);
+    flex: none;
+  }
+  .lbl {
+    flex: 1;
+    min-width: 0;
+    small {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+  .chev {
+    color: var(--muted);
+  }
+}
+.mono-area {
+  width: 100%;
+  min-height: 220px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.chips-in {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 10px;
+  background: var(--sunk);
+  min-height: 40px;
+  align-items: center;
+  .c {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 26px;
+    padding: 0 4px 0 9px;
+    border-radius: 7px;
+    background: var(--card);
+    font-family: var(--mono);
+    font-size: 12px;
+    border: 1px solid var(--line);
+    button {
+      width: 18px;
+      height: 18px;
+      border-radius: 5px;
+      color: var(--muted);
+      &:hover {
+        background: var(--sunk);
+        color: var(--text);
+      }
+    }
+  }
+  input {
+    flex: 1;
+    min-width: 120px;
+    background: transparent;
+    border: 0;
+    padding: 4px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    &:focus {
+      border: 0;
+    }
+  }
+}

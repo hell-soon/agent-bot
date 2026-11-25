@@ -76,11 +76,16 @@ async function refresh() { checking.value = true; await checkLimits(); checking.
               :class="r.status"
             /><span class="t">{{ r.title }}</span>
             <span
+              v-if="r.auto"
+              class="tag"
+              :title="`Авторабота: ${r.auto}`"
+            >авто</span>
+            <span
               v-if="r.ai === 'codex'"
               class="tag"
             >Codex</span>
             <span
-              v-if="multi && r.repo"
+              v-if="multi && r.repo && r.repo !== store.curRepo"
               class="tag"
             >{{ r.repo.split('/')[1] }}</span>
           </div>

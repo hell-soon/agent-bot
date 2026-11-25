@@ -6,6 +6,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
+import * as skills from './skills.mjs'
 
 const PORT = 4545
 const BOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
@@ -517,6 +518,12 @@ const DEFAULTS = {
   budget: 8,
   codeMode: true,
   notify: true,
+  allowCmds: [],
+  denyCmds: [],
+  skillsOff: [],
+  autoEvery: 5,
+  autoMaxPerDay: 10,
+  repos: {},
 }
 function readConfig() {
   try {
@@ -559,10 +566,177 @@ function writeConfig(patch) {
     ].includes(v)) {
       c[k] = v
     }
+    // начала команд для фонового режима: без ; & | $ ` и кавычек
+    if ((k === 'allowCmds' || k === 'denyCmds') && Array.isArray(v))
+      c[k] = [...new Set(v.map(x => String(x).trim()).filter(x => /^[\w@./:=+ -]{1,80}$/.test(x)))].slice(0, 50)
+    if (k === 'skillsOff' && Array.isArray(v))
+      c.skillsOff = v.filter(x => typeof x === 'string' && x.length < 200)
+    if (k === 'autoEvery' && Number(v) >= 2 && Number(v) <= 120)
+      c.autoEvery = Math.round(Number(v))
+    if (k === 'autoMaxPerDay' && Number(v) >= 1 && Number(v) <= 100)
+      c.autoMaxPerDay = Math.round(Number(v))
   }
   fs.writeFileSync(CONFIG, JSON.stringify(c, null, 2))
   return c
 }
+// Настройки одного репозитория — config.repos["owner/repo"]
+const REPO_FIELDS = {
+  ai: v => ['', 'claude', 'codex'].includes(v),
+  ticketModel: v => ['', 'haiku', 'sonnet', 'opus'].includes(v),
+  codexModel: v => typeof v === 'string' && /^[\w.:-]{0,60}$/.test(v),
+  base: v => typeof v === 'string' && /^[\w./-]{0,100}$/.test(v),
+  checks: v => typeof v === 'string' && v.length <= 500,
+  draft: v => typeof v === 'boolean',
+  reviewers: v => typeof v === 'string' && /^[\w,\s/-]{0,200}$/.test(v),
+  labels: v => typeof v === 'string' && /^[\w,\s:.-]{0,200}$/.test(v),
+}
+const AUTO_FIELDS = ['issues', 'ci', 'reviews', 'conflicts']
+function writeRepoConfig(repo, patch) {
+  const c = readConfig()
+  const rc = { ...(c.repos?.[repo] || {}) }
+  for (const [k, v] of Object.entries(patch)) {
+    if (REPO_FIELDS[k]?.(v))
+      rc[k] = typeof v === 'string' ? v.trim() : v
+    if (k === 'auto' && v && typeof v === 'object')
+      rc.auto = Object.fromEntries(AUTO_FIELDS.map(f => [f, f in v ? !!v[f] : !!rc.auto?.[f]]))
+  }
+  c.repos = { ...(c.repos || {}), [repo]: rc }
+  fs.writeFileSync(CONFIG, JSON.stringify(c, null, 2))
+  return rc
+}
+
+// ---------- правила владельца: rules/_global.md и rules/<owner>__<repo>.md ----------
+const RULES = path.join(BOT, 'rules')
+const rulesFile = repo => path.join(RULES, repo ? `${repo.replace('/', '__')}.md` : '_global.md')
+function readRules(repo) {
+  const r = f => {
+    try { return fs.readFileSync(f, 'utf8') }
+    catch { return '' }
+  }
+  return { global: r(rulesFile()), repo: r(rulesFile(repo)) }
+}
+
+// ---------- авторабота: issue «ready-for-agent», упавший CI, конфликты, ревью в PR бота ----------
+const AUTO_STATE = path.join(DATA, 'auto.json')
+let autoState = { seen: {}, ciTries: {}, day: '', count: 0, log: [], lastAt: 0 }
+try { autoState = { ...autoState, ...JSON.parse(fs.readFileSync(AUTO_STATE, 'utf8')) } }
+catch {}
+const saveAuto = () => fs.writeFileSync(AUTO_STATE, JSON.stringify(autoState))
+function autoLog(repo, text) {
+  autoState.log.unshift({ at: Date.now(), repo, text })
+  autoState.log = autoState.log.slice(0, 50)
+}
+const isBotAuthor = a => !a || a.is_bot || /^app\/|\[bot\]$/.test(a.login || '')
+let autoBusy = false
+async function autoTick(force = false) {
+  const c = readConfig()
+  const repos = Object.entries(c.repos || {}).filter(([, rc]) => AUTO_FIELDS.some(f => rc.auto?.[f]))
+  if (!repos.length || autoBusy)
+    return
+  if (!force && Date.now() - autoState.lastAt < (c.autoEvery || 5) * 60000)
+    return
+  autoBusy = true
+  autoState.lastAt = Date.now()
+  const today = new Date().toDateString()
+  if (autoState.day !== today)
+    Object.assign(autoState, { day: today, count: 0 })
+  const max = c.autoMaxPerDay || 10
+  let added = 0
+  try {
+    for (const [repo, rc] of repos) {
+      const a = rc.auto
+      const ai = rc.ai || c.ai
+      if (ai !== 'codex' && Object.values(limits).some(l => l.status === 'rejected' && l.resetsAt > Date.now())) {
+        autoLog(repo, 'Пропуск: исчерпан лимит Claude')
+        continue
+      }
+      const active = pred => runs.some(r => r.repo === repo && pred(r) && ['queued', 'running', 'waiting', 'limited'].includes(r.status))
+      const enqueue = (fields, why) => {
+        if (autoState.count >= max) {
+          autoLog(repo, `Дневной предел авторабот (${max}) — «${fields.title}» отложено`)
+          return false
+        }
+        autoState.count++
+        added++
+        newRun({ ...fields, repo, ai, auto: why })
+        autoLog(repo, `${why}: ${fields.title}`)
+        return true
+      }
+      if (a.issues) {
+        const issues = await gh(['issue', 'list', '-R', repo, '--state', 'open', '--label', 'ready-for-agent', '--limit', '20', '--json', 'number,title,labels'])
+        for (const i of issues) {
+          const key = `issue:${repo}#${i.number}`
+          if (autoState.seen[key] || i.labels.some(l => l.name === 'in-progress') || active(r => r.issue === i.number))
+            continue
+          if (enqueue({ kind: 'issue', issue: i.number, title: `#${i.number} ${i.title}` }, 'issue готов для бота'))
+            autoState.seen[key] = Date.now()
+        }
+      }
+      if (!a.ci && !a.reviews && !a.conflicts)
+        continue
+      const prs = await gh(['pr', 'list', '-R', repo, '--state', 'open', '--limit', '30', '--json', 'number,title,headRefName,headRefOid,author,mergeable,statusCheckRollup'])
+      for (const p of prs.filter(p => p.headRefName?.startsWith('agent/') || isBotAuthor(p.author))) {
+        if (active(r => r.kind === 'pr' && Number(r.pr) === p.number))
+          continue
+        const id = `${repo}#${p.number}`
+        const firstSight = !autoState.seen[`pr:${id}`]
+        autoState.seen[`pr:${id}`] ||= Date.now()
+        const job = (text, title, why, key) => {
+          if (autoState.seen[key])
+            return false
+          if (enqueue({ kind: 'pr', pr: p.number, text, title: `PR #${p.number}: ${title}` }, why)) {
+            autoState.seen[key] = Date.now()
+            return true
+          }
+          return false
+        }
+        if (a.conflicts && p.mergeable === 'CONFLICTING' && job('@conflicts', 'конфликт с базой', 'конфликт в PR', `conf:${id}:${p.headRefOid}`))
+          continue
+        if (a.ci) {
+          const failed = (p.statusCheckRollup || []).some(x => ['FAILURE', 'ERROR', 'TIMED_OUT', 'STARTUP_FAILURE'].includes(x.conclusion || x.state))
+          if (!failed) {
+            delete autoState.ciTries[id]
+          }
+          else if ((autoState.ciTries[id] || 0) >= 3) {
+            if (!autoState.seen[`cistop:${id}:${p.headRefOid}`]) {
+              autoState.seen[`cistop:${id}:${p.headRefOid}`] = Date.now()
+              autoLog(repo, `PR #${p.number}: CI падает третий раз подряд — дальше без меня`)
+            }
+          }
+          else if (job('@ci', 'упавшие проверки', 'CI упал', `ci:${id}:${p.headRefOid}`)) {
+            autoState.ciTries[id] = (autoState.ciTries[id] || 0) + 1
+            continue
+          }
+        }
+        if (a.reviews) {
+          const v = await gh(['pr', 'view', String(p.number), '-R', repo, '--json', 'reviews,comments'])
+          const times = [
+            ...(v.reviews || []).filter(r => !isBotAuthor(r.author) && (r.state === 'CHANGES_REQUESTED' || r.body?.trim())).map(r => r.submittedAt),
+            ...(v.comments || []).filter(r => !isBotAuthor(r.author)).map(r => r.createdAt),
+          ].filter(Boolean).sort()
+          const last = times.at(-1)
+          if (!last)
+            continue
+          const key = `rev:${id}:${last}`
+          if (firstSight)
+            autoState.seen[key] = Date.now() // старое ревью — уже до нас; отвечаем только на новое
+          else
+            job('', 'ответить на ревью', 'новое ревью', key)
+        }
+      }
+    }
+  }
+  catch (e) { autoLog('', `Ошибка авторабот: ${e.message}`) }
+  finally {
+    autoBusy = false
+    saveAuto()
+    if (added) {
+      pushState()
+      next()
+    }
+  }
+}
+setInterval(() => autoTick(), 60000)
 function tokenInfo() {
   try {
     const t = fs.readFileSync(TOKEN, 'utf8').trim(); const st = fs.statSync(TOKEN)
@@ -867,6 +1041,71 @@ const server = http.createServer(async (req, res) => {
       token: tokenInfo(),
     })
   }
+  // скиллы
+  if (p === '/api/skills' && req.method === 'GET') {
+    const repo = repoOf(url.searchParams.get('repo'))
+    const work = path.join(BOT, 'work', repo.replace('/', '__'))
+    return json(res, { skills: skills.listSkills(work).map(({ dir, file, ...x }) => x), sources: skills.listSources(work).map(({ dir, ...x }) => x) })
+  }
+  if (p === '/api/skills/toggle' && req.method === 'POST') {
+    const b = await body(req)
+    const off = new Set(readConfig().skillsOff)
+    if (b.on)
+      off.delete(b.id)
+    else off.add(b.id)
+    writeConfig({ skillsOff: [...off] })
+    skills.build()
+    return json(res, { ok: true })
+  }
+  if (p.startsWith('/api/skills/') && req.method === 'POST') {
+    const b = await body(req)
+    try {
+      if (p === '/api/skills/install')
+        return json(res, await skills.install(b.spec))
+      if (p === '/api/skills/update') {
+        await skills.update(b.source)
+        return json(res, { ok: true })
+      }
+      if (p === '/api/skills/remove') {
+        skills.remove(b.source)
+        return json(res, { ok: true })
+      }
+    }
+    catch (e) { return json(res, { error: e.message }, 400) }
+  }
+  // правила владельца
+  if (p === '/api/rules' && req.method === 'GET')
+    return json(res, readRules(repoOf(url.searchParams.get('repo'))))
+  if (p === '/api/rules' && req.method === 'POST') {
+    const b = await body(req)
+    const repo = repoOf(b.repo)
+    fs.mkdirSync(RULES, { recursive: true })
+    for (const [k, f] of [['global', rulesFile()], ['repo', rulesFile(repo)]]) {
+      if (typeof b[k] === 'string') {
+        if (b[k].length > 20000)
+          return json(res, { error: 'Слишком длинно' }, 400)
+        fs.writeFileSync(f, b[k])
+      }
+    }
+    return json(res, readRules(repo))
+  }
+  // настройки репозитория
+  if (p === '/api/repo-settings' && req.method === 'GET')
+    return json(res, { settings: readConfig().repos?.[repoOf(url.searchParams.get('repo'))] || {} })
+  if (p === '/api/repo-settings' && req.method === 'POST') {
+    const b = await body(req)
+    const rc = writeRepoConfig(repoOf(b.repo), b)
+    if (b.auto)
+      setTimeout(() => autoTick(true), 1000)
+    return json(res, { settings: rc })
+  }
+  // авторабота: журнал
+  if (p === '/api/auto' && req.method === 'GET')
+    return json(res, { log: autoState.log, count: autoState.count, max: readConfig().autoMaxPerDay, lastAt: autoState.lastAt })
+  if (p === '/api/auto/run' && req.method === 'POST') {
+    await autoTick(true)
+    return json(res, { log: autoState.log })
+  }
   if (p === '/api/memory' && req.method === 'GET') {
     const file = memPath(repoOf(url.searchParams.get('repo')))
     let text = ''; try { text = fs.readFileSync(file, 'utf8') }
@@ -909,10 +1148,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && p === '/api/jobs') {
     const b = await body(req)
+    const repo = repoOf(b.repo)
+    const cfgNow = readConfig()
     const ai = ['claude', 'codex'].includes(b.ai)
       ? b.ai
-      : readConfig().ai
-    const repo = repoOf(b.repo)
+      : cfgNow.repos?.[repo]?.ai || cfgNow.ai
     const refs = (Array.isArray(b.refs)
       ? b.refs
       : []).filter(r => isRepo(r) && r !== repo).slice(0, 4)
