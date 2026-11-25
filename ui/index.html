@@ -1,0 +1,1054 @@
+<!doctype html>
+<html lang="ru" data-ai="claude">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Цвет — по выбранному ИИ: Claude — терракота на тёплом, Codex — чёрно-белый */
+:root {
+  --ok: #2f8a5b; --ok-soft: #e3f2e9; --bad: #c4432f; --bad-soft: #f9e6e2; --warn: #a86a00; --warn-soft: #f8eed8;
+  font-family: Inter, -apple-system, system-ui, sans-serif; font-size: 14px;
+}
+:root[data-ai='claude'] {
+  --bg: #f5f4ef; --side: #efede6; --card: #ffffff; --sunk: #ebe9e1; --line: rgba(40, 32, 20, .10);
+  --text: #23211e; --muted: #75706a; --accent: #c96442; --accent-hover: #b4583a; --accent-soft: #f5e2d9; --accent-text: #b4583a; --on-accent: #fff;
+  --shadow: 0 1px 2px rgba(40, 30, 10, .05), 0 6px 24px -10px rgba(40, 30, 10, .14); color-scheme: light;
+}
+:root[data-ai='codex'] {
+  --bg: #f9f9f9; --side: #f1f1f2; --card: #ffffff; --sunk: #ececee; --line: rgba(0, 0, 0, .09);
+  --text: #0d0d0d; --muted: #6e6e73; --accent: #0d0d0d; --accent-hover: #2c2c2e; --accent-soft: #e6e6e9; --accent-text: #0d0d0d; --on-accent: #fff;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .05), 0 6px 24px -10px rgba(0, 0, 0, .14); color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --ok: #63c98f; --ok-soft: #18301f; --bad: #ff8a75; --bad-soft: #3a1f1a; --warn: #f0b94e; --warn-soft: #362a12; }
+  :root[data-ai='claude'] {
+    --bg: #262624; --side: #1f1e1d; --card: #30302e; --sunk: #2b2a28; --line: rgba(255, 245, 230, .09);
+    --text: #f1eee8; --muted: #a39d94; --accent: #d97757; --accent-hover: #e3896b; --accent-soft: #42302a; --accent-text: #e8957a; --on-accent: #fff;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 28px -12px rgba(0, 0, 0, .6); color-scheme: dark;
+  }
+  :root[data-ai='codex'] {
+    --bg: #212121; --side: #171717; --card: #2b2b2b; --sunk: #262626; --line: rgba(255, 255, 255, .09);
+    --text: #ececec; --muted: #9a9a9f; --accent: #f2f2f2; --accent-hover: #ffffff; --accent-soft: #333333; --accent-text: #ffffff; --on-accent: #0d0d0d;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 28px -12px rgba(0, 0, 0, .7); color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); line-height: 1.5; transition: background .25s; }
+button, select, textarea, input { font: inherit; color: inherit; }
+button { cursor: pointer; border: 0; background: none; padding: 0; }
+a { color: inherit; }
+[hidden] { display: none !important; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+code { background: var(--sunk); padding: 1px 5px; border-radius: 5px; }
+pre { background: var(--sunk); padding: 10px 12px; border-radius: 10px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; max-height: 320px; }
+svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+kbd { font: 11px ui-monospace, Menlo, monospace; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; background: var(--card); }
+.spacer { flex: 1; }
+.small { font-size: 12.5px; color: var(--muted); }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 10px; font-weight: 500; white-space: nowrap; background: var(--sunk); transition: background .12s; text-decoration: none; }
+.btn:hover { background: var(--accent-soft); }
+.btn.primary { background: var(--accent); color: var(--on-accent); }
+.btn.primary:hover { background: var(--accent-hover); }
+.btn.ghost { background: transparent; color: var(--muted); }
+.btn.ghost:hover { background: var(--sunk); color: var(--text); }
+.btn.sm { height: 28px; padding: 0 10px; font-size: 13px; border-radius: 8px; }
+.btn.icon { width: 34px; padding: 0; }
+.btn:disabled { opacity: .45; cursor: default; }
+input[type=text], input[type=password], input[type=number], select, textarea {
+  width: 100%; background: var(--sunk); border: 1px solid transparent; border-radius: 10px; padding: 8px 10px; outline: none;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+.seg { display: inline-flex; background: var(--sunk); border-radius: 10px; padding: 3px; gap: 2px; }
+.seg button { height: 26px; padding: 0 11px; border-radius: 7px; font-size: 13px; color: var(--muted); font-weight: 500; white-space: nowrap; }
+.seg button:hover { color: var(--text); }
+.seg button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+
+/* каркас */
+.app { display: grid; grid-template-columns: 272px minmax(0, 1fr); height: 100vh; }
+.sb { background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; transition: background .25s; }
+.sb-top { display: flex; align-items: center; gap: 9px; padding: 14px 14px 6px; }
+.logo { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); flex: none; transition: background .25s; }
+.logo svg { width: 18px; height: 18px; stroke-width: 2; }
+.brand { font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
+.repo-pick { margin: 4px 10px 0; width: calc(100% - 20px); height: 32px; padding: 0 8px; background: transparent; color: var(--muted); font-size: 13px; }
+.repo-pick:hover:not(:disabled) { background: var(--sunk); }
+.repo-pick:disabled { appearance: none; opacity: 1; }
+.sb-btn { margin: 0 10px; justify-content: flex-start; gap: 9px; height: 36px; background: transparent; color: var(--muted); }
+.sb-btn:hover { background: var(--sunk); color: var(--text); }
+.sb-btn kbd { margin-left: auto; }
+.sb-btn.new { margin-top: 8px; background: var(--card); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .05); border: 1px solid var(--line); height: 38px; }
+.sb-btn.new:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.sb-list { flex: 1; overflow: auto; padding: 4px 8px 12px; }
+.sb-list h3 { font-size: 11.5px; font-weight: 600; color: var(--muted); margin: 14px 8px 4px; }
+.sb-run { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 8px; cursor: pointer; font-size: 13.5px; }
+.sb-run:hover { background: var(--sunk); }
+.sb-run.sel { background: var(--card); box-shadow: 0 1px 2px rgba(0, 0, 0, .06); }
+.sb-run .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-run .ai { font-size: 10.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.sb-more { margin: 4px 8px; }
+.sb-foot { border-top: 1px solid var(--line); padding: 12px 14px 14px; display: grid; gap: 10px; }
+.lim { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 8px; font-size: 12.5px; }
+.lim .bar { grid-column: 1 / -1; height: 4px; border-radius: 9px; background: var(--sunk); overflow: hidden; }
+.lim .bar i { display: block; height: 100%; background: var(--ok); }
+.lim.warn .bar i { background: var(--warn); } .lim.bad .bar i { background: var(--bad); }
+.lim .v { font-weight: 600; font-variant-numeric: tabular-nums; } .lim.warn .v { color: var(--warn); } .lim.bad .v { color: var(--bad); }
+.lim .r { grid-column: 1 / -1; color: var(--muted); font-size: 11.5px; }
+.foot-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.bar { display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 18px; flex: none; }
+.bar .menu { display: none; }
+.search-btn { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px 0 10px; border-radius: 9px; background: var(--sunk); color: var(--muted); font-size: 13px; min-width: 240px; }
+.search-btn:hover { color: var(--text); }
+.search-btn kbd { margin-left: auto; }
+.ai-switch button.on { color: var(--accent-text); }
+.scroll { flex: 1; overflow: auto; }
+.col { width: min(760px, calc(100% - 40px)); margin: 0 auto; }
+
+/* главная */
+.home { padding: 6vh 0 60px; }
+.hello h1 { font-size: 30px; font-weight: 600; letter-spacing: -.025em; margin: 0; }
+.hello h1 .mark { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: var(--accent); color: var(--on-accent); vertical-align: -6px; margin-right: 10px; }
+.hello h1 .mark svg { width: 21px; height: 21px; stroke-width: 2; }
+.hello p { margin: 6px 0 22px; color: var(--muted); }
+.banner { margin-bottom: 14px; padding: 12px 14px; border-radius: 12px; background: var(--warn-soft); color: var(--warn); font-size: 13px; display: flex; gap: 12px; align-items: center; }
+.banner pre { margin: 4px 0 0; background: transparent; padding: 0; max-height: 70px; }
+.composer { background: var(--card); border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow); padding: 14px 14px 12px; display: grid; gap: 10px; }
+.composer:focus-within { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.composer textarea { background: transparent; border: 0; padding: 4px; min-height: 52px; resize: none; font-size: 15px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); font-size: 13px; font-weight: 500; transition: .12s; }
+.chip svg { width: 15px; height: 15px; }
+.chip:hover { color: var(--text); background: var(--sunk); }
+.chip.on { background: var(--accent-soft); border-color: transparent; color: var(--accent-text); }
+.composer .hint { font-size: 12.5px; color: var(--muted); padding: 0 4px; }
+.pick { max-height: 230px; overflow: auto; border-radius: 12px; background: var(--sunk); padding: 4px; }
+.pick label { display: flex; gap: 10px; align-items: flex-start; padding: 7px 9px; border-radius: 8px; cursor: pointer; }
+.pick label:hover { background: var(--card); }
+.pick input { margin-top: 4px; accent-color: var(--accent); }
+.pick .num { color: var(--muted); min-width: 32px; font-variant-numeric: tabular-nums; }
+.tag { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--card); color: var(--muted); margin-left: 6px; white-space: nowrap; border: 1px solid var(--line); }
+.composer .bottom { display: flex; align-items: center; gap: 8px; }
+.err { color: var(--bad); font-size: 13px; padding: 0 4px; }
+.extra { display: grid; gap: 8px; padding: 10px; border-radius: 12px; background: var(--sunk); }
+.extra .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.extra select { width: auto; background: var(--card); }
+.extra .pick { background: var(--card); max-height: 120px; }
+
+.stats { display: flex; gap: 22px; flex-wrap: wrap; margin: 28px 2px 0; font-size: 13px; color: var(--muted); }
+.stats b { display: block; font-size: 20px; font-weight: 600; color: var(--text); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.attn { margin-top: 28px; }
+.attn h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 10px 2px; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.acard { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: grid; gap: 8px; align-content: start; }
+.acard .k { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); font-weight: 500; }
+.acard .k .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.acard .k .dot.ok { background: var(--ok); } .acard .k .dot.bad { background: var(--bad); } .acard .k .dot.warn { background: var(--warn); }
+.acard .t { font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.acard .a { display: flex; gap: 6px; }
+.calm { background: var(--card); border: 1px dashed var(--line); border-radius: 14px; padding: 18px; color: var(--muted); font-size: 13.5px; display: grid; gap: 6px; }
+.calm b { color: var(--text); font-weight: 600; }
+
+/* задача */
+.rv { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 32px; width: min(1160px, calc(100% - 40px)); margin: 0 auto; align-items: start; }
+.rv-main { min-width: 0; display: flex; flex-direction: column; min-height: calc(100vh - 52px); }
+.rv-head { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 6px 0 12px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; transition: background .25s; }
+.rv-title { display: flex; align-items: flex-start; gap: 10px; }
+.rv-title h2 { margin: 2px 0 0; font-size: 18px; font-weight: 600; letter-spacing: -.01em; flex: 1; min-width: 0; }
+.rv-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.badge { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: var(--sunk); color: var(--muted); white-space: nowrap; margin-top: 3px; }
+.badge.running, .badge.done { background: var(--ok-soft); color: var(--ok); }
+.badge.failed { background: var(--bad-soft); color: var(--bad); }
+.badge.waiting { background: var(--accent-soft); color: var(--accent-text); } .badge.limited { background: var(--warn-soft); color: var(--warn); }
+.why { padding: 10px 14px; border-radius: 12px; background: var(--bad-soft); color: var(--bad); font-size: 13px; }
+.why.limited { background: var(--warn-soft); color: var(--warn); } .why.ok { background: var(--ok-soft); color: var(--ok); }
+.feed { flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 18px 0 24px; }
+.who { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin-top: 10px; }
+.who .av { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); }
+.who .av svg { width: 14px; height: 14px; stroke-width: 2.2; }
+.who span.m { color: var(--muted); font-weight: 400; }
+.msg { max-width: 700px; padding-left: 30px; }
+.msg p { margin: 0 0 8px; } .msg p:last-child { margin: 0; }
+.msg.user { align-self: flex-end; background: var(--card); border: 1px solid var(--line); padding: 9px 14px; border-radius: 14px; margin-top: 10px; }
+.tool { display: flex; gap: 8px; align-items: baseline; color: var(--muted); font-size: 13px; padding-left: 32px; }
+.tool .ic { width: 14px; text-align: center; flex: none; font-size: 12px; }
+.tool .what { min-width: 0; overflow-wrap: anywhere; }
+.tool .what code { background: transparent; padding: 0; color: var(--text); opacity: .85; }
+.tool details { margin-top: 2px; } .tool summary { cursor: pointer; font-size: 12px; }
+.tool.error .what { color: var(--bad); }
+.note { align-self: center; font-size: 12px; color: var(--muted); margin: 4px 0; }
+.result { margin-left: 30px; padding: 10px 14px; border-radius: 12px; background: var(--ok-soft); color: var(--ok); }
+.result.bad { background: var(--bad-soft); color: var(--bad); }
+.result a { color: inherit; font-weight: 600; }
+.todos { list-style: none; margin: 4px 0 0; padding: 0; }
+.todos li::before { content: '○ '; } .todos li.completed { opacity: .6; text-decoration: line-through; }
+.todos li.completed::before { content: '● '; color: var(--ok); } .todos li.in_progress { color: var(--text); } .todos li.in_progress::before { content: '◐ '; color: var(--accent); }
+.choice { margin-left: 30px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; max-width: 670px; display: grid; gap: 10px; box-shadow: var(--shadow); }
+.choice .q { font-weight: 600; }
+.choice .opts { display: grid; gap: 6px; }
+.choice .opt { text-align: left; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 1px 10px; padding: 9px 11px; border-radius: 10px; border: 1px solid var(--line); transition: .12s; }
+.choice .opt:hover:not(:disabled) { border-color: var(--accent); }
+.choice .opt .k { grid-row: span 2; width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; font-size: 11.5px; font-weight: 600; background: var(--sunk); color: var(--muted); margin-top: 1px; }
+.choice .opt .l { font-weight: 500; } .choice .opt .d { grid-column: 2; color: var(--muted); font-size: 12.5px; }
+.choice .opt.on { border-color: var(--accent); background: var(--accent-soft); } .choice .opt.on .k { background: var(--accent); color: var(--on-accent); }
+.choice .opt.rec .l::after { content: '  рекомендую'; font-size: 11.5px; font-weight: 500; color: var(--accent-text); }
+.choice .foot { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+.choice.answered { box-shadow: none; } .choice.answered .opt { cursor: default; } .choice.answered .opt:not(.on) { opacity: .4; }
+.dock { position: sticky; bottom: 0; padding: 10px 0 18px; background: linear-gradient(transparent, var(--bg) 30%); }
+.dock .composer { padding: 8px 8px 8px 12px; }
+.dock form { display: flex; gap: 8px; align-items: flex-end; }
+.dock textarea { min-height: 40px; height: 40px; font-size: 14px; }
+.typing { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; justify-content: center; }
+.st { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); opacity: .45; flex: none; }
+.st.running { background: var(--ok); opacity: 1; animation: pulse 1.6s infinite; }
+.st.done { background: var(--ok); opacity: 1; } .st.failed { background: var(--bad); opacity: 1; }
+.st.waiting { background: var(--accent); opacity: 1; } .st.limited { background: var(--warn); opacity: 1; }
+.st.queued { background: transparent; border: 1.5px solid var(--muted); opacity: .8; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--ok) 20%, transparent); } }
+
+.rv-side { position: sticky; top: 8px; display: grid; gap: 12px; max-height: calc(100vh - 70px); overflow: auto; padding: 6px 0 12px; }
+.side-card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 10px; }
+.side-card h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px 12px; font-size: 13px; margin: 0; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kv dd a { color: var(--accent-text); font-weight: 500; text-decoration: none; }
+.ctxbar { height: 4px; border-radius: 9px; background: var(--sunk); overflow: hidden; } .ctxbar i { display: block; height: 100%; background: var(--accent); }
+.ctxbar.warn i { background: var(--warn); }
+.side-acts { display: grid; gap: 6px; } .side-acts .btn { width: 100%; }
+.files { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.files li { font-family: ui-monospace, Menlo, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.side-card .todos { font-size: 13px; display: grid; gap: 4px; }
+.side-empty { font-size: 12.5px; color: var(--muted); }
+.narrow-only { display: none !important; }
+
+/* поиск как Spotlight */
+dialog.pal { margin: 16vh auto auto; width: min(660px, calc(100% - 24px)); max-width: 100%; border: 0; padding: 0; background: transparent; color: inherit; overflow: visible; }
+dialog.pal::backdrop { background: transparent; }
+.pal-box { border-radius: 18px; overflow: hidden; background: color-mix(in srgb, var(--card) 80%, transparent); backdrop-filter: blur(40px) saturate(1.8);
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent); box-shadow: 0 0 0 .5px rgba(0, 0, 0, .1), 0 24px 70px -10px rgba(0, 0, 0, .45); }
+.pal-in { display: flex; align-items: center; gap: 12px; padding: 0 18px; height: 58px; }
+.pal-in svg { width: 22px; height: 22px; color: var(--muted); }
+.pal-in input, .pal-in input:focus { flex: 1; height: 100%; border: 0; outline: none; box-shadow: none; background: transparent; border-radius: 0; font-size: 21px; font-weight: 400; padding: 0; letter-spacing: -.01em; }
+.pal-in input::placeholder { color: var(--muted); opacity: .8; }
+.pal-list { max-height: min(52vh, 460px); overflow: auto; padding: 6px; border-top: 1px solid var(--line); }
+.pal-list:empty { display: none; }
+.pal-g { font-size: 11.5px; font-weight: 600; color: var(--muted); padding: 8px 10px 4px; }
+.pal-item { display: flex; align-items: center; gap: 11px; padding: 0 10px; height: 40px; border-radius: 9px; cursor: default; }
+.pal-item .pi { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: var(--sunk); color: var(--muted); flex: none; }
+.pal-item .pi svg { width: 15px; height: 15px; }
+.pal-item .pt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+.pal-item .pt span { color: var(--muted); }
+.pal-item .ph { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.pal-item.on { background: var(--accent); color: var(--on-accent); }
+.pal-item.on .pi { background: color-mix(in srgb, var(--on-accent) 20%, transparent); color: var(--on-accent); }
+.pal-item.on .pt span, .pal-item.on .ph { color: color-mix(in srgb, var(--on-accent) 75%, transparent); }
+.pal-foot { display: flex; gap: 14px; padding: 8px 16px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }
+.pal-foot kbd { background: transparent; }
+
+/* настройки */
+dialog.drawer { margin: 0 0 0 auto; height: 100%; max-height: 100%; width: min(440px, 100%); max-width: 100%; border: 0; padding: 0; background: var(--card); color: inherit; box-shadow: var(--shadow); }
+dialog.drawer::backdrop { background: rgba(0, 0, 0, .25); }
+.drawer-in { display: flex; flex-direction: column; height: 100%; }
+.drawer-head { display: flex; align-items: center; gap: 8px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.drawer-head h2 { margin: 0; font-size: 16px; font-weight: 600; flex: 1; }
+.drawer-body { overflow: auto; padding: 6px 18px 30px; }
+.grp { padding: 16px 0 6px; }
+.grp + .grp { border-top: 1px solid var(--line); }
+.grp h4 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.set { display: flex; align-items: center; gap: 12px; padding: 8px 0; min-height: 44px; }
+.set .lbl { flex: 1; min-width: 0; }
+.set .lbl small { display: block; color: var(--muted); font-size: 12px; }
+.set input[type=number] { width: 80px; } .set input[type=text] { width: 150px; }
+.sw { position: relative; width: 38px; height: 22px; flex: none; }
+.sw input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
+.sw span { position: absolute; inset: 0; border-radius: 99px; background: var(--line); transition: background .2s; }
+.sw span::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s; box-shadow: 0 1px 2px rgba(0, 0, 0, .2); }
+.sw input:checked + span { background: var(--accent); } .sw input:checked + span::after { transform: translateX(16px); }
+:root[data-ai='codex'] .sw input:checked + span::after { background: var(--bg); }
+.mem textarea { min-height: 260px; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; line-height: 1.55; }
+.tok-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; padding: 4px 0 8px; }
+.ok-t { color: var(--ok); } .bad-t { color: var(--bad); }
+.toast { position: fixed; left: 12px; right: 12px; bottom: 22px; display: grid; justify-items: center; pointer-events: none; z-index: 100; }
+.toast span { background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 10px; font-size: 13px; opacity: 0; transform: translateY(6px); transition: .2s; }
+.toast.show span { opacity: 1; transform: none; }
+
+@media (max-width: 1180px) {
+  .rv { grid-template-columns: minmax(0, 1fr); width: min(760px, calc(100% - 32px)); }
+  .rv-side { display: none; }
+  .narrow-only { display: flex !important; }
+}
+@media (max-width: 820px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .sb { position: fixed; inset: 0 auto 0 0; width: 290px; z-index: 40; transform: translateX(-100%); transition: transform .2s; box-shadow: var(--shadow); }
+  body.sb-open .sb { transform: none; }
+  body.sb-open::after { content: ''; position: fixed; inset: 0; background: rgba(0, 0, 0, .25); z-index: 30; }
+  .bar .menu { display: inline-flex; }
+  .search-btn { min-width: 0; } .search-btn span.l, .search-btn kbd { display: none; }
+  .cards { grid-template-columns: minmax(0, 1fr); }
+  .msg, .tool, .result, .choice { padding-left: 0; margin-left: 0; }
+  dialog.pal { margin-top: 10vh; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sb" id="sb">
+    <div class="sb-top"><span class="logo" id="logo"></span><span class="brand">bot</span></div>
+    <select class="repo-pick" id="repo" title="Репозиторий"></select>
+    <button class="btn sb-btn new" id="newBtn"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Новая задача<kbd>N</kbd></button>
+    <div class="sb-list" id="runs"></div>
+    <div class="sb-foot">
+      <div id="limits" style="display:grid;gap:9px"></div>
+      <div class="foot-row"><span id="today"></span><span class="spacer"></span>
+        <button class="btn ghost sm" id="limCheck" title="Узнать лимиты сейчас (запрос к Haiku, ~$0.01)">↻</button>
+        <button class="btn ghost sm" id="setBtn" title="Настройки (⌘,)"><svg class="i" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.3a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.2.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.8l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.3a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.3a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.8v-.5a2 2 0 0 1 1-1.7l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.3a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>Настройки</button>
+      </div>
+    </div>
+  </aside>
+  <section class="main">
+    <header class="bar">
+      <button class="btn ghost icon menu" id="menuBtn" title="Меню"><svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+      <button class="search-btn" id="searchBtn"><svg class="i" viewBox="0 0 24 24" style="width:16px;height:16px"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="l">Поиск и команды</span><kbd>⌘K</kbd></button>
+      <span class="spacer"></span>
+      <div class="seg ai-switch" id="aiSwitch" title="Кто работает по умолчанию"><button data-ai="claude">Claude</button><button data-ai="codex">Codex</button></div>
+    </header>
+    <div class="scroll" id="scroll"><div id="main"></div></div>
+  </section>
+</div>
+
+<dialog class="pal" id="pal"><div class="pal-box">
+  <div class="pal-in"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="palQ" placeholder="Поиск или новая задача" autocomplete="off" spellcheck="false"></div>
+  <div class="pal-list" id="palList"></div>
+  <div class="pal-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> выбрать</span><span><kbd>↵</kbd> открыть</span><span><kbd>esc</kbd> закрыть</span></div>
+</div></dialog>
+<dialog class="drawer" id="drawer"><div class="drawer-in">
+  <div class="drawer-head"><h2 id="drawerTitle">Настройки</h2><button class="btn ghost icon" id="drawerClose" title="Закрыть">✕</button></div>
+  <div class="drawer-body" id="drawerBody"></div>
+</div></dialog>
+<div class="toast" id="toast"><span></span></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s)
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+const api = async (url, body) => {
+  const r = await fetch(url, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  const data = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(data.error || r.statusText)
+  return data
+}
+const ls = { get: (k) => { try { return localStorage.getItem(k) } catch { return null } }, set: (k, v) => { try { localStorage.setItem(k, v) } catch {} } }
+const toast = (t) => { const el = $('#toast'); el.firstElementChild.textContent = t; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 2000) }
+const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
+if (!isMac) for (const k of document.querySelectorAll('kbd')) k.textContent = k.textContent.replace('⌘', 'Ctrl ')
+const BOT_SVG = '<svg class="i" viewBox="0 0 24 24"><rect x="4.5" y="8" width="15" height="11.5" rx="4"/><path d="M12 8V5"/><circle cx="12" cy="3.6" r="1.1" fill="currentColor" stroke="none"/><path d="M9.5 13.2v.6M14.5 13.2v.6"/><path d="M2.5 13v2M21.5 13v2"/></svg>'
+$('#logo').innerHTML = BOT_SVG
+const I = {
+  task: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  issue: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="1.5"/>',
+  idea: '<path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/>',
+  bug: '<path d="M9 7.1V6a3 3 0 1 1 6 0v1.1M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6zM12 20v-9M6 13H2M22 13h-4"/>',
+  pr: '<circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 9v12M13 6h3a2 2 0 0 1 2 2v7"/>',
+  queue: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  chain: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+  triage: '<path d="M3 6h18M7 12h10M10 18h4"/>',
+  tickets: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/>',
+  more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+  back: '<path d="M15 18l-6-6 6-6"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
+  mem: '<path d="M12 5a3 3 0 1 0-6 0 3 3 0 0 0-3 3c0 1.2.7 2.2 1.7 2.7A3 3 0 0 0 6 16a3 3 0 0 0 6 0V5zM12 5a3 3 0 1 1 6 0 3 3 0 0 1 3 3c0 1.2-.7 2.2-1.7 2.7A3 3 0 0 1 18 16a3 3 0 0 1-6 0"/>',
+  swap: '<path d="M7 16V4M3 8l4-4 4 4M17 8v12M21 16l-4 4-4-4"/>',
+  home: '<path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  limit: '<path d="M12 20a8 8 0 1 0-8-8M12 12l4-3"/>',
+}
+const icon = (k) => `<svg class="i" viewBox="0 0 24 24">${I[k] || I.task}</svg>`
+
+// ---------- ИИ и тема ----------
+let cfg = {}
+const aiName = (ai) => (ai === 'codex' ? 'Codex' : 'Claude')
+const shownAi = () => document.documentElement.dataset.ai
+let codexInfo = null // { models, login, limits }
+async function loadCodex() { try { codexInfo = await api('/api/codex') } catch {} return codexInfo }
+function applyAi(ai) { const v = ai === 'codex' ? 'codex' : 'claude'; if (document.documentElement.dataset.ai !== v) { document.documentElement.dataset.ai = v; renderLimits() } }
+function renderAiSwitch() { for (const b of $('#aiSwitch').children) b.classList.toggle('on', b.dataset.ai === (cfg.ai || 'claude')) }
+async function setAi(ai) {
+  if (!ai || ai === cfg.ai) return
+  cfg.ai = ai; renderAiSwitch(); if (!selected) { applyAi(ai); renderHome() }
+  if ($('#drawer').open) openSettings()
+  try { await api('/api/settings', { ai }); toast('По умолчанию — ' + aiName(ai)) } catch (err) { toast(err.message) }
+}
+$('#aiSwitch').addEventListener('click', (e) => setAi(e.target.closest('[data-ai]')?.dataset.ai))
+
+// ---------- виды задач ----------
+const MODES = {
+  task: { name: 'Своими словами', ph: 'Что сделать? Например: «поправь отступы в карточке плеера на телефоне»', hint: '' },
+  issue: { name: 'Из issue', hint: 'Бот создаст ветку, напишет код, проверит и откроет PR — без вопросов.' },
+  idea: { name: 'Фича', ph: 'Идея своими словами: что не устраивает, что хочется', hint: 'Бот изучит код и будет спрашивать по одному. Итог — issue, которые можно отдать боту.' },
+  bug: { name: 'Баг', ph: 'Что делали → что ожидали → что случилось; телефон или компьютер', hint: 'Найдёт причину и предложит исправление.' },
+  pr: { name: 'Правки PR', ph: 'Что поправить — или оставьте пустым: бот прочитает ревью и проверки', hint: '' },
+  queue: { name: 'Очередь', hint: 'Несколько независимых задач — каждая свой PR. Отмечайте по порядку.', more: true },
+  chain: { name: 'Цепочка', hint: 'Каждая следующая строится поверх предыдущей. Порядок важен.', more: true },
+  triage: { name: 'Разобрать issue', hint: 'Проверит новые issue, уточнит, поставит метки и размер.', more: true },
+  tickets: { name: 'Нарезать', ph: 'Необязательно: какую спецификацию или issue разбить', hint: 'Разобьёт план на небольшие issue с зависимостями.', more: true },
+}
+let mode = MODES[ls.get('bot:mode')] ? ls.get('bot:mode') : 'task'
+let showMore = MODES[mode].more || false
+let gh = { issues: [], prs: [] }
+let picked = [], draft = ''
+
+const issueLabel = (i) => {
+  const size = i.labels.find((l) => l.startsWith('size:'))
+  return `<span class="num">#${i.number}</span><span>${esc(i.title)}${i.labels.includes('ready-for-agent') ? '<span class="tag">готово</span>' : ''}${i.labels.includes('in-progress') ? '<span class="tag">в работе</span>' : ''}${size ? `<span class="tag">${esc(size)}</span>` : ''}</span>`
+}
+function composerHTML() {
+  const m = MODES[mode]
+  const chip = (k) => `<button type="button" class="chip ${k === mode ? 'on' : ''}" data-mode="${k}">${icon(k)}${MODES[k].name}</button>`
+  const main = ['task', 'issue', 'idea', 'bug', 'pr'], extra = ['queue', 'chain', 'triage', 'tickets']
+  let body = m.ph !== undefined ? `<textarea id="text" rows="2" placeholder="${esc(m.ph)}">${esc(draft)}</textarea>` : ''
+  if (mode === 'issue' || mode === 'queue' || mode === 'chain') {
+    body = gh.issues.length
+      ? `<div class="pick" id="pick">${gh.issues.slice().sort((a, b) => a.number - b.number).map((i) => `<label><input type="${mode === 'issue' ? 'radio' : 'checkbox'}" name="issue" value="${i.number}">${issueLabel(i)}</label>`).join('')}</div>
+         ${mode !== 'issue' ? `<div class="chips"><span class="small" id="order">${picked.length ? 'Порядок: ' + picked.map((n) => '#' + n).join(' → ') : ''}</span><span class="spacer"></span><button type="button" class="btn ghost sm" id="pickReady">Все готовые</button></div>` : ''}`
+      : '<div class="small" style="padding:4px">Открытых issue нет — заведите на GitHub или через «Фичу».</div>'
+  }
+  if (mode === 'pr') body = (gh.prs.length ? `<select id="pr">${gh.prs.map((p) => `<option value="${p.number}">#${p.number} ${esc(p.title)}</option>`).join('')}</select>` : '<div class="small" style="padding:4px">Открытых PR нет.</div>') + body
+  const refs = repos.filter((r) => r !== curRepo)
+  return `<form class="composer" id="form">
+    ${body}
+    <div class="chips">${main.map(chip).join('')}${showMore ? extra.map(chip).join('') : `<button type="button" class="chip" id="moreChips">${icon('more')}Ещё</button>`}</div>
+    ${m.hint ? `<div class="hint">${m.hint}</div>` : ''}
+    <div class="extra" id="extra" hidden>
+      <div class="row"><span class="small">ИИ</span><select id="ai"><option value="">${aiName(cfg.ai)} (по умолчанию)</option><option value="${cfg.ai === 'codex' ? 'claude' : 'codex'}">${cfg.ai === 'codex' ? 'Claude' : 'Codex'}</option></select>
+      <span class="small">Модель</span><select id="model">${modelOptions(cfg.ai)}</select></div>
+      ${refs.length ? `<div class="small">Подсмотреть в других репозиториях (только чтение)</div><div class="pick" id="refs">${refs.map((r) => `<label><input type="checkbox" value="${esc(r)}"><span>${esc(r)}</span></label>`).join('')}</div>` : ''}
+    </div>
+    <div class="err" id="formErr" hidden></div>
+    <div class="bottom"><button type="button" class="btn ghost sm" id="extraBtn">Параметры</button><span class="spacer"></span><span class="small">${isMac ? '⌘' : 'Ctrl'}↵</span><button class="btn primary" id="go">Запустить</button></div>
+  </form>`
+}
+function modelOptions(ai) {
+  if (ai === 'codex') return '<option value="">как в настройках</option>' + (codexInfo?.models || []).map((m) => `<option value="${esc(m.slug)}">${esc(m.name)}</option>`).join('')
+  return '<option value="">авто</option><option value="haiku">Haiku</option><option value="sonnet">Sonnet</option><option value="opus">Opus</option>'
+}
+function bindComposer() {
+  const f = $('#form')
+  f.addEventListener('click', (e) => {
+    const k = e.target.closest('[data-mode]')?.dataset.mode
+    if (k) { setMode(k); $('#text')?.focus(); return }
+    if (e.target.closest('#moreChips')) { showMore = true; rerenderComposer(); return }
+    if (e.target.closest('#extraBtn')) { $('#extra').hidden = !$('#extra').hidden; return }
+    if (e.target.closest('#pickReady')) {
+      picked = gh.issues.filter((i) => i.labels.includes('ready-for-agent')).map((i) => i.number).sort((a, b) => a - b)
+      for (const cb of f.querySelectorAll('#pick input')) cb.checked = picked.includes(Number(cb.value))
+      $('#order').textContent = picked.length ? 'Порядок: ' + picked.map((n) => '#' + n).join(' → ') : 'Нет готовых'
+    }
+  })
+  f.addEventListener('change', (e) => {
+    if (e.target.closest('#pick') && mode !== 'issue') {
+      const v = Number(e.target.value)
+      picked = e.target.checked ? [...picked, v] : picked.filter((x) => x !== v)
+      $('#order').textContent = picked.length ? 'Порядок: ' + picked.map((n) => '#' + n).join(' → ') : ''
+    }
+  })
+  const ta = $('#text')
+  if (ta) {
+    const fit = () => { ta.style.height = 'auto'; ta.style.height = Math.min(260, ta.scrollHeight) + 'px' }
+    ta.addEventListener('input', fit); fit()
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) f.requestSubmit() })
+  }
+  f.addEventListener('submit', submit)
+  $('#ai')?.addEventListener('change', (e) => { $('#model').innerHTML = modelOptions(e.target.value || cfg.ai) })
+}
+function setMode(k) {
+  draft = $('#text')?.value ?? draft; mode = k; ls.set('bot:mode', k); picked = []
+  if (MODES[k].more) showMore = true
+  if ($('#form')) rerenderComposer()
+}
+function rerenderComposer() {
+  const wasOpen = $('#extra') && !$('#extra').hidden
+  $('#form').outerHTML = composerHTML(); bindComposer()
+  if (wasOpen) $('#extra').hidden = false
+}
+async function startJob(b) {
+  const { ids } = await api('/api/jobs', { repo: curRepo, ...b })
+  draft = ''; picked = []
+  select(ids[0])
+}
+async function submit(e) {
+  e.preventDefault()
+  const err = (t) => { $('#formErr').textContent = t; $('#formErr').hidden = false }
+  const b = { model: $('#model').value, ai: $('#ai').value, refs: [...document.querySelectorAll('#refs input:checked')].map((i) => i.value) }
+  const text = $('#text')?.value.trim() || ''
+  if (mode === 'issue') { b.kind = 'issue'; b.issue = document.querySelector('#pick input:checked')?.value; if (!b.issue) return err('Выберите issue') }
+  else if (mode === 'queue' || mode === 'chain') { b.kind = mode; b.issues = picked; if (!picked.length) return err('Отметьте issue') }
+  else if (mode === 'pr') { b.kind = 'pr'; b.pr = $('#pr')?.value; b.text = text; if (!b.pr) return }
+  else { b.kind = mode; b.text = text; if (!text && ['task', 'idea', 'bug'].includes(mode)) return err('Опишите задачу') }
+  try { $('#go').disabled = true; await startJob(b) } catch (er) { err(er.message) } finally { if ($('#go')) $('#go').disabled = false }
+}
+
+// ---------- данные и форматирование ----------
+let state = { runs: [], current: null }
+let selected = null, showAll = false
+const STATUS = { limited: 'ждёт лимита', queued: 'в очереди', running: 'работает', waiting: 'ждёт ответа', done: 'готово', failed: 'не получилось', stopped: 'остановлено', skipped: 'пропущено' }
+const ago = (t) => { if (!t) return ''; const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'сейчас' : m < 60 ? `${m} мин` : m < 1440 ? `${Math.round(m / 60)} ч` : new Date(t).toLocaleDateString('ru', { day: 'numeric', month: 'short' }) }
+const money = (c) => c ? `$${c.toFixed(2)}` : ''
+const tok = (n) => !n ? '0' : n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n)
+const runTok = (r) => ({ in: (r.tokIn || 0) + (r.liveIn || 0), out: (r.tokOut || 0) + (r.liveOut || 0) })
+const until = (t) => { if (!t) return ''; const m = Math.max(0, Math.round((t - Date.now()) / 60000)); return m < 60 ? `через ${m} мин` : m < 1440 ? `через ${Math.floor(m / 60)} ч ${m % 60} мин` : new Date(t).toLocaleString('ru', { weekday: 'short', hour: '2-digit', minute: '2-digit' }) }
+const isActive = (r) => ['running', 'queued', 'waiting', 'limited'].includes(r.status)
+const startOfDay = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() }
+
+// ---------- боковая панель ----------
+function renderSidebar() {
+  const active = state.runs.filter(isActive), rest = state.runs.filter((r) => !isActive(r))
+  const day = startOfDay()
+  const today = rest.filter((r) => (r.endedAt || r.createdAt) >= day), older = rest.filter((r) => (r.endedAt || r.createdAt) < day)
+  const multi = repos.length > 1
+  const row = (r) => `<div class="sb-run ${r.id === selected ? 'sel' : ''}" data-id="${r.id}" title="${esc(r.title)} — ${STATUS[r.status] || ''}"><span class="st ${r.status}"></span><span class="t">${esc(r.title)}</span>${r.ai === 'codex' ? '<span class="ai">Codex</span>' : ''}${multi && r.repo ? `<span class="ai">${esc(r.repo.split('/')[1])}</span>` : ''}</div>`
+  const shownOlder = showAll ? older : older.slice(0, 12)
+  $('#runs').innerHTML = (active.length ? '<h3>Сейчас</h3>' + active.map(row).join('') : '') +
+    (today.length ? '<h3>Сегодня</h3>' + today.map(row).join('') : '') +
+    (older.length ? '<h3>Раньше</h3>' + shownOlder.map(row).join('') + (older.length > 12 && !showAll ? `<button class="btn ghost sm sb-more" id="showAll">Ещё ${older.length - 12}</button>` : '') : '') +
+    (!state.runs.length ? '<div class="small" style="padding:12px 8px">Задач пока нет</div>' : '')
+}
+$('#runs').addEventListener('click', (e) => {
+  if (e.target.id === 'showAll') { showAll = true; return renderSidebar() }
+  const id = e.target.closest('.sb-run')?.dataset.id; if (id) { document.body.classList.remove('sb-open'); select(id) }
+})
+function newTask(k = 'task', text) {
+  document.body.classList.remove('sb-open')
+  if (text !== undefined) draft = text
+  mode = k; ls.set('bot:mode', k); if (MODES[k].more) showMore = true
+  if (selected) goHome(); else renderHome()
+  setTimeout(() => { const t = $('#text'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length) } }, 30)
+}
+$('#newBtn').onclick = () => newTask()
+$('#menuBtn').onclick = () => document.body.classList.toggle('sb-open')
+document.addEventListener('click', (e) => { if (document.body.classList.contains('sb-open') && !e.target.closest('.sb') && !e.target.closest('#menuBtn')) document.body.classList.remove('sb-open') })
+
+// ---------- лимиты ----------
+const LIMIT_NAMES = { five_hour: '5 часов', seven_day: 'Неделя', seven_day_opus: 'Неделя · Opus', seven_day_sonnet: 'Неделя · Sonnet' }
+function limRow(name, pct, rejected, resetsAt, title) {
+  const val = pct ?? (rejected ? 100 : 0)
+  const lvl = rejected || val >= 95 ? 'bad' : val >= 75 ? 'warn' : ''
+  return `<div class="lim ${lvl}" title="${title}"><span>${name}</span><span class="v">${rejected ? 'исчерпан' : pct !== null && pct !== undefined ? pct + '%' : 'в норме'}</span>
+    <span class="bar"><i style="width:${val}%"></i></span>${resetsAt && resetsAt > Date.now() && val >= 50 ? `<span class="r">сброс ${until(resetsAt)}</span>` : ''}</div>`
+}
+function renderLimits() {
+  const t = state.today || {}
+  if (shownAi() === 'codex') {
+    const c = state.codexLimits || codexInfo?.limits
+    const win = (w) => (w?.windowMin >= 10000 ? 'Неделя' : w?.windowMin ? `${Math.round(w.windowMin / 60)} часов` : '')
+    $('#limits').innerHTML = c ? [c.primary, c.secondary].filter(Boolean).map((w) => limRow(win(w), w.pct, w.pct >= 100, w.resetsAt, 'Лимит подписки ChatGPT для Codex')).join('')
+      : '<div class="small">Лимиты Codex появятся после первой задачи</div>'
+    $('#today').textContent = `ChatGPT · ${tok((t.tokIn || 0) + (t.tokOut || 0))} ток. сегодня`
+    $('#limCheck').title = 'Перечитать лимиты Codex'
+    return
+  }
+  const L = { five_hour: { status: 'unknown' }, ...(state.limits || {}) }
+  const keys = Object.keys(L).filter((k) => !k.startsWith('codex')).sort((a, b) => (a === 'five_hour' ? -1 : b === 'five_hour' ? 1 : a.localeCompare(b)))
+  $('#limits').innerHTML = keys.map((k) => {
+    let l = L[k]; if (l.status === 'rejected' && l.resetsAt && l.resetsAt < Date.now()) l = { status: 'unknown' }
+    const pct = typeof l.utilization === 'number' ? Math.round(l.utilization * 100) : null
+    return limRow(LIMIT_NAMES[k] || k, pct, l.status === 'rejected', l.resetsAt, 'Лимит подписки Claude — тратят и бот, и ваши обычные сессии')
+  }).join('')
+  $('#today').textContent = `Сегодня ${money(t.cost) || '$0'}`
+  $('#limCheck').title = 'Узнать лимиты Claude сейчас (запрос к Haiku, ~$0.01)'
+}
+async function checkLimits() { try { if (shownAi() === 'codex') await api('/api/codex/limits', {}); else await api('/api/limits/check', {}); toast('Лимиты обновлены') } catch {} renderLimits() }
+$('#limCheck').onclick = async (e) => { e.currentTarget.disabled = true; await checkLimits(); e.currentTarget.disabled = false }
+
+// ---------- главная ----------
+function greeting() { const h = new Date().getHours(); return h < 5 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер' }
+function attentionHTML() {
+  const cards = []
+  for (const r of state.runs.filter((r) => r.status === 'waiting').slice(0, 3))
+    cards.push(`<div class="acard"><div class="k"><span class="dot"></span>Ждёт вашего ответа</div><div class="t">${esc(r.title)}</div><div class="a"><button class="btn sm primary" data-open="${r.id}">Ответить</button></div></div>`)
+  for (const r of state.runs.filter((r) => r.status === 'failed' || r.status === 'limited').slice(0, 2))
+    cards.push(`<div class="acard"><div class="k"><span class="dot ${r.status === 'limited' ? 'warn' : 'bad'}"></span>${r.status === 'limited' ? 'Ждёт лимита' : 'Не получилось'}</div><div class="t">${esc(r.title)}</div><div class="a"><button class="btn sm" data-open="${r.id}">Открыть</button>${r.sessionId ? `<button class="btn sm ghost" data-cont="${r.id}">Продолжить</button>` : ''}</div></div>`)
+  for (const p of gh.prs.slice(0, 4))
+    cards.push(`<div class="acard"><div class="k"><span class="dot ok"></span>PR ждёт ревью${p.author?.is_bot ? ' · от бота' : ''}</div><div class="t">#${p.number} ${esc(p.title)}</div><div class="a"><a class="btn sm" href="${esc(p.url)}" target="_blank">Открыть ↗</a><button class="btn sm ghost" data-fixpr="${p.number}">Поправить</button></div></div>`)
+  for (const i of gh.issues.filter((i) => i.labels.includes('ready-for-agent') && !i.labels.includes('in-progress')).slice(0, 4))
+    cards.push(`<div class="acard"><div class="k"><span class="dot"></span>Готово для бота${i.labels.find((l) => l.startsWith('size:')) ? ' · ' + esc(i.labels.find((l) => l.startsWith('size:'))) : ''}</div><div class="t">#${i.number} ${esc(i.title)}</div><div class="a"><button class="btn sm primary" data-doissue="${i.number}">Сделать</button></div></div>`)
+  return cards.length
+    ? `<section class="attn"><h2>Требует внимания</h2><div class="cards">${cards.join('')}</div></section>`
+    : `<section class="attn"><h2>Требует внимания</h2><div class="calm"><b>Всё спокойно.</b><span>Опишите задачу выше — или поставьте метку <code>ready-for-agent</code> на issue: они появятся здесь с кнопкой «Сделать». Быстрый поиск и команды — <kbd>${isMac ? '⌘' : 'Ctrl '}K</kbd>.</span></div></section>`
+}
+function statsHTML() {
+  const day = startOfDay(), t = state.today || {}
+  const todays = state.runs.filter((r) => (r.endedAt || r.startedAt || r.createdAt) >= day)
+  const prs = todays.filter((r) => r.prUrl).length
+  return `<div class="stats"><div><b>${todays.length}</b>задач сегодня</div><div><b>${prs}</b>PR</div>${shownAi() === 'codex' ? '' : `<div><b>${money(t.cost) || '$0'}</b>потрачено</div>`}<div><b>${tok((t.tokIn || 0) + (t.tokOut || 0))}</b>токенов</div><div><b>${gh.issues.length}</b>открытых issue</div></div>`
+}
+function renderHome() {
+  es?.close(); es = null; feedEl = null
+  applyAi(cfg.ai); renderSidebar()
+  const keepText = $('#text')?.value; if (keepText !== undefined && !$('#feed')) draft = keepText
+  $('#main').innerHTML = `<div class="col home">
+    <div class="hello"><h1><span class="mark">${BOT_SVG}</span>${greeting()}</h1><p>${aiName(cfg.ai)} работает в фоне в своей копии <b>${esc(curRepo.split('/')[1] || '')}</b> и приносит PR — сливаете вы.</p></div>
+    <div id="banner"></div>${composerHTML()}<div id="attn">${attentionHTML()}</div><div id="stats">${statsHTML()}</div></div>`
+  bindComposer(); checkRepo()
+}
+function refreshHome() { if (!selected && $('#attn')) { $('#attn').innerHTML = attentionHTML(); $('#stats').innerHTML = statsHTML() } }
+const doIssue = async (n) => { try { await startJob({ kind: 'issue', issue: String(n) }) } catch (er) { toast(er.message) } }
+const fixPr = (n) => { newTask('pr'); setTimeout(() => { if ($('#pr')) $('#pr').value = String(n) }, 40) }
+const continueRun = async (id) => { try { await api(`/api/runs/${id}/continue`, {}); select(id) } catch (er) { toast(er.message) } }
+$('#main').addEventListener('click', async (e) => {
+  const o = e.target.closest('[data-open]')?.dataset.open; if (o) return select(o)
+  const c = e.target.closest('[data-cont]')?.dataset.cont; if (c) return continueRun(c)
+  const n = e.target.closest('[data-doissue]')?.dataset.doissue; if (n) { e.target.disabled = true; return doIssue(n) }
+  const p = e.target.closest('[data-fixpr]')?.dataset.fixpr; if (p) return fixPr(p)
+})
+
+// ---------- поиск и команды (как Spotlight) ----------
+let palItems = [], palSel = 0
+const norm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е')
+function matches(q, ...fields) { const hay = norm(fields.join(' ')); return norm(q).split(/\s+/).filter(Boolean).every((w) => hay.includes(w)) }
+function buildPalette(q) {
+  q = q.trim()
+  const groups = []
+  const push = (title, items) => { if (items.length) groups.push({ title, items }) }
+  if (q) push('Поручить боту', [
+    { ic: 'task', t: `Новая задача: <span>«${esc(q)}»</span>`, h: aiName(cfg.ai), run: () => { closePalette(); startJob({ kind: 'task', text: q }).catch((e) => toast(e.message)) } },
+    { ic: 'idea', t: `Обсудить как фичу: <span>«${esc(q)}»</span>`, run: () => { closePalette(); startJob({ kind: 'idea', text: q }).catch((e) => toast(e.message)) } },
+    { ic: 'bug', t: `Разобрать как баг: <span>«${esc(q)}»</span>`, run: () => { closePalette(); startJob({ kind: 'bug', text: q }).catch((e) => toast(e.message)) } },
+  ])
+  const runs = state.runs.filter((r) => !q || matches(q, r.title, STATUS[r.status], r.ai === 'codex' ? 'codex' : 'claude')).slice(0, q ? 8 : 5)
+  push(q ? 'Задачи' : 'Недавние задачи', runs.map((r) => ({ ic: r.kind === 'bug' ? 'bug' : r.kind === 'idea' ? 'idea' : r.kind === 'pr' ? 'pr' : r.kind === 'issue' ? 'issue' : 'task', t: esc(r.title), h: STATUS[r.status] + ' · ' + ago(r.endedAt || r.startedAt || r.createdAt), dot: r.status, run: () => { closePalette(); select(r.id) } })))
+  const issues = gh.issues.filter((i) => q && matches(q, '#' + i.number, i.number, i.title)).slice(0, 5)
+  push('Issue — сделать', issues.map((i) => ({ ic: 'issue', t: `#${i.number} ${esc(i.title)}`, h: i.labels.includes('ready-for-agent') ? 'готово для бота' : '', run: () => { closePalette(); doIssue(i.number) } })))
+  const prs = gh.prs.filter((p) => q && matches(q, '#' + p.number, p.number, p.title, 'pr')).slice(0, 4)
+  push('Pull requests', prs.flatMap((p) => [
+    { ic: 'pr', t: `#${p.number} ${esc(p.title)}`, h: 'открыть на GitHub', run: () => { closePalette(); window.open(p.url, '_blank') } },
+    { ic: 'pr', t: `Поправить <span>#${p.number}</span>`, h: 'правки PR', run: () => { closePalette(); fixPr(p.number) } },
+  ]))
+  const acts = [
+    { ic: 'task', t: 'Новая задача', h: 'N', k: 'новая задача создать', run: () => { closePalette(); newTask() } },
+    { ic: 'issue', t: 'Сделать задачу из issue…', k: 'issue задача сделать', run: () => { closePalette(); newTask('issue') } },
+    { ic: 'idea', t: 'Обсудить фичу…', k: 'фича идея обсудить', run: () => { closePalette(); newTask('idea') } },
+    { ic: 'bug', t: 'Разобрать баг…', k: 'баг ошибка', run: () => { closePalette(); newTask('bug') } },
+    { ic: 'pr', t: 'Поправить PR…', k: 'pr правки ревью', run: () => { closePalette(); newTask('pr') } },
+    { ic: 'queue', t: 'Очередь из нескольких issue…', k: 'очередь несколько', run: () => { closePalette(); newTask('queue') } },
+    { ic: 'chain', t: 'Цепочка задач…', k: 'цепочка зависимые', run: () => { closePalette(); newTask('chain') } },
+    { ic: 'triage', t: 'Разобрать новые issue', k: 'триаж разобрать метки triage', run: () => { closePalette(); startJob({ kind: 'triage' }).catch((e) => toast(e.message)) } },
+    { ic: 'swap', t: `Переключить на ${cfg.ai === 'codex' ? 'Claude' : 'Codex'}`, k: 'переключить ии claude codex модель', run: () => { closePalette(); setAi(cfg.ai === 'codex' ? 'claude' : 'codex') } },
+    { ic: 'gear', t: 'Настройки', h: isMac ? '⌘,' : 'Ctrl ,', k: 'настройки settings модель токен', run: () => { closePalette(); openSettings() } },
+    { ic: 'mem', t: 'Память бота', k: 'память memory правила', run: () => { closePalette(); openSettings('memory') } },
+    { ic: 'limit', t: 'Проверить лимиты', k: 'лимиты лимит неделя', run: () => { closePalette(); checkLimits() } },
+    { ic: 'home', t: 'На главную', k: 'главная домой home', run: () => { closePalette(); goHome() } },
+    ...repos.filter((r) => r !== curRepo).map((r) => ({ ic: 'swap', t: `Перейти в ${esc(r)}`, k: 'репозиторий перейти ' + r, run: () => { closePalette(); $('#repo').value = r; $('#repo').dispatchEvent(new Event('change')) } })),
+  ].filter((a) => !q || matches(q, a.t.replace(/<[^>]+>/g, ''), a.k || ''))
+  push(q ? 'Команды' : 'Действия', acts.slice(0, q ? 6 : 8))
+  return groups
+}
+function renderPalette() {
+  const groups = buildPalette($('#palQ').value)
+  palItems = groups.flatMap((g) => g.items)
+  palSel = Math.min(palSel, Math.max(0, palItems.length - 1))
+  let i = 0
+  $('#palList').innerHTML = groups.map((g) => `<div class="pal-g">${g.title}</div>` + g.items.map((it) => {
+    const n = i++
+    return `<div class="pal-item ${n === palSel ? 'on' : ''}" data-i="${n}"><span class="pi">${it.dot ? `<span class="st ${it.dot}"></span>` : icon(it.ic)}</span><span class="pt">${it.t}</span>${it.h ? `<span class="ph">${esc(it.h)}</span>` : ''}</div>`
+  }).join('')).join('')
+  $('#palList .pal-item.on')?.scrollIntoView({ block: 'nearest' })
+}
+function openPalette() {
+  if ($('#drawer').open) $('#drawer').close()
+  $('#palQ').value = ''; palSel = 0; renderPalette()
+  $('#pal').showModal(); $('#palQ').focus()
+}
+function closePalette() { if ($('#pal').open) $('#pal').close() }
+$('#searchBtn').onclick = openPalette
+$('#palQ').addEventListener('input', () => { palSel = 0; renderPalette() })
+$('#palQ').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown') { e.preventDefault(); palSel = (palSel + 1) % Math.max(1, palItems.length); renderPalette() }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); palSel = (palSel - 1 + palItems.length) % Math.max(1, palItems.length); renderPalette() }
+  else if (e.key === 'Enter') { e.preventDefault(); palItems[palSel]?.run() }
+})
+$('#palList').addEventListener('mousemove', (e) => { const n = e.target.closest('.pal-item')?.dataset.i; if (n !== undefined && Number(n) !== palSel) { palSel = Number(n); for (const el of $('#palList').children) el.classList?.toggle('on', el.dataset.i === n) } })
+$('#palList').addEventListener('click', (e) => { const n = e.target.closest('.pal-item')?.dataset.i; if (n !== undefined) palItems[Number(n)]?.run() })
+$('#pal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closePalette() })
+
+// горячие клавиши
+document.addEventListener('keydown', (e) => {
+  const mod = isMac ? e.metaKey : e.ctrlKey
+  if (mod && (e.code === 'KeyK')) { e.preventDefault(); return $('#pal').open ? closePalette() : openPalette() }
+  if (mod && e.key === ',') { e.preventDefault(); return openSettings() }
+  if (e.target.closest('textarea, input, select, dialog') || e.metaKey || e.ctrlKey || e.altKey) return
+  if (e.key === '/') { e.preventDefault(); return openPalette() }
+  if (e.key === 'Escape' && selected) return goHome()
+  if (e.code === 'KeyN') { e.preventDefault(); return newTask() }
+  const card = openChoices.find((c) => !c._picked.size) || openChoices[openChoices.length - 1]
+  const n = Number(e.key); if (!card || !n) return
+  card.querySelectorAll('.opt')[n - 1]?.click()
+})
+
+// ---------- вопросы с вариантами ----------
+function splitChoices(t) {
+  const questions = []
+  const text = t.replace(/```choices\s*\n([\s\S]*?)```/g, (all, body) => {
+    try {
+      const q = JSON.parse(body)
+      if (!q.question || !Array.isArray(q.options) || !q.options.length) return all
+      q.options = q.options.map((o) => typeof o === 'string' ? { label: o } : o).filter((o) => o?.label)
+      questions.push(q); return ''
+    } catch { return all }
+  })
+  return { text, questions }
+}
+let openChoices = []
+function addChoice(q) {
+  const el = add(`<div class="q">${md(q.question).replace(/^<p>|<\/p>$/g, '')}</div>
+    <div class="opts">${q.options.map((o, i) => `<button type="button" class="opt ${/рекоменд|recommend/i.test(o.label) ? 'rec' : ''}" data-i="${i}">
+      <span class="k">${q.multi ? '✓' : i + 1}</span><span class="l">${esc(o.label.replace(/\s*\((рекомендую|рекомендуется|recommended)\)/i, ''))}</span>${o.description ? `<span class="d">${esc(o.description)}</span>` : ''}</button>`).join('')}</div>
+    <div class="foot">${q.multi ? 'Можно несколько' : 'Клавиши 1–9'} · или ответьте своими словами<span class="spacer"></span>${q.multi ? '<button type="button" class="btn primary sm" data-send>Ответить</button>' : ''}</div>`, 'choice', 'bot')
+  el._q = q; el._picked = new Set(); openChoices.push(el)
+}
+function closeChoices(answer) {
+  for (const el of openChoices) {
+    el.classList.add('answered')
+    for (const b of el.querySelectorAll('button')) b.disabled = true
+    for (const o of el.querySelectorAll('.opt')) if (answer.includes(o.querySelector('.l').textContent)) o.classList.add('on')
+  }
+  openChoices = []
+}
+function choiceAnswer() {
+  const parts = []
+  for (const el of openChoices) {
+    if (!el._picked.size) return null
+    const labels = [...el._picked].sort().map((i) => el.querySelectorAll('.opt')[i].querySelector('.l').textContent)
+    parts.push(openChoices.length > 1 ? `${el._q.question} — ${labels.join(', ')}` : labels.join(', '))
+  }
+  return parts.join('\n')
+}
+async function sendChoice() {
+  const ans = choiceAnswer(); if (!ans) return
+  const extra = $('#replyText')?.value.trim()
+  try { await api(`/api/runs/${selected}/reply`, { text: extra ? `${ans}\n\n${extra}` : ans }); if ($('#replyText')) $('#replyText').value = '' } catch (err) { toast(err.message) }
+}
+document.addEventListener('click', (e) => {
+  const card = e.target.closest('.choice'); if (!card || card.classList.contains('answered')) return
+  const r = state.runs.find((x) => x.id === selected)
+  if (!r || r.status === 'running' || r.status === 'queued') return
+  const opt = e.target.closest('.opt')
+  if (opt) {
+    const i = Number(opt.dataset.i)
+    if (card._q.multi) { card._picked.has(i) ? card._picked.delete(i) : card._picked.add(i); opt.classList.toggle('on') }
+    else { card._picked = new Set([i]); for (const o of card.querySelectorAll('.opt')) o.classList.toggle('on', o === opt) }
+    if (!card._q.multi && choiceAnswer()) sendChoice()
+    return
+  }
+  if (e.target.closest('[data-send]')) sendChoice()
+})
+
+// ---------- лента ----------
+let es = null
+const short = (p) => { p = String(p || ''); const d = state.botDir; if (!d) return p; for (const k of ['/work/', '/refs/']) if (p.startsWith(d + k)) return p.slice(d.length + k.length).replace(/^[^/]+\//, ''); return p }
+function md(s) {
+  let h = esc(s)
+  h = h.replace(/```[\w-]*\n([\s\S]*?)```/g, (_, c) => `<pre>${c}</pre>`)
+  h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+  h = h.replace(/(https?:\/\/[^\s<)]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
+  return h.split(/\n{2,}/).map((p) => p.startsWith('<pre>') ? p : `<p>${p.replace(/\n/g, '<br>')}</p>`).join('')
+}
+function toolText(name, i = {}) {
+  switch (name) {
+    case 'Read': return ['↗', `Читает <code>${esc(short(i.file_path))}</code>`]
+    case 'Grep': return ['⌕', `Ищет <code>${esc(i.pattern)}</code>${i.path ? ` в <code>${esc(short(i.path))}</code>` : ''}`]
+    case 'Glob': return ['⌕', `Ищет файлы <code>${esc(i.pattern)}</code>`]
+    case 'Edit': case 'MultiEdit': return ['✎', `Правит <code>${esc(short(i.file_path))}</code>`]
+    case 'Write': return ['✎', `Записывает <code>${esc(short(i.file_path))}</code>`]
+    case 'Bash': return ['›', `<code>${esc(i.command?.length > 240 ? i.command.slice(0, 240) + '…' : i.command)}</code>`]
+    case 'Skill': return ['✦', `Скилл <code>/${esc(i.skill || i.command || '')}</code>`]
+    case 'Task': case 'Agent': return ['⧉', `Подагент: ${esc(i.description || '')}`]
+    case 'WebFetch': case 'WebSearch': return ['◎', `${name} <code>${esc(i.url || i.query || '')}</code>`]
+    default: return ['·', esc(name)]
+  }
+}
+const tools = new Map()
+let feedEl = null, replaying = false, lastWho = null, runAi = 'claude'
+const nearBottom = () => { const s = $('#scroll'); return s.scrollTop + s.clientHeight > s.scrollHeight - 160 }
+function add(html, cls = '', who = null) {
+  if (who === 'bot' && lastWho !== 'bot') {
+    const h = document.createElement('div'); h.className = 'who'; h.innerHTML = `<span class="av">${BOT_SVG}</span>bot <span class="m">· ${aiName(runAi)}</span>`
+    feedEl.appendChild(h)
+  }
+  if (who) lastWho = who
+  const stick = nearBottom()
+  const d = document.createElement('div'); d.className = cls; d.innerHTML = html
+  feedEl.appendChild(d)
+  if (stick && !replaying) $('#scroll').scrollTop = $('#scroll').scrollHeight
+  return d
+}
+function onEvent(ev) {
+  if (!feedEl) return
+  if (ev.type === 'system' && ev.subtype === 'init') return
+  if (ev.type === 'assistant') {
+    for (const c of ev.message?.content || []) {
+      if (c.type === 'text' && c.text.trim()) {
+        const { text, questions } = splitChoices(c.text)
+        if (text.trim()) add(md(text), 'msg', 'bot')
+        for (const q of questions) addChoice(q)
+      }
+      if (c.type === 'tool_use') {
+        if (c.name === 'TodoWrite') { add(`<span class="ic">☐</span><div class="what">План<ul class="todos">${(c.input?.todos || []).map((t) => `<li class="${t.status}">${esc(t.content)}</li>`).join('')}</ul></div>`, 'tool', 'bot'); continue }
+        const [ic, what] = toolText(c.name, c.input)
+        tools.set(c.id, add(`<span class="ic">${ic}</span><div class="what">${what}</div>`, 'tool', 'bot'))
+      }
+    }
+  }
+  if (ev.type === 'user') {
+    for (const c of ev.message?.content || []) {
+      if (c.type !== 'tool_result') continue
+      const el = tools.get(c.tool_use_id); if (!el) continue
+      const out = String(c.content || '').trim()
+      if (c.is_error) el.classList.add('error')
+      if (out) el.querySelector('.what').insertAdjacentHTML('beforeend', `<details ${c.is_error ? 'open' : ''}><summary>${c.is_error ? 'ошибка' : 'вывод'}</summary><pre>${esc(out)}</pre></details>`)
+    }
+  }
+  if (ev.type === 'result' && ev.is_error) add('Закончил с ошибкой', 'note')
+  if (ev.type === 'result' && !ev.is_error && ev.num_turns > 2) add(`${ev.num_turns} шагов · ${ev.duration_ms ? Math.max(1, Math.round(ev.duration_ms / 60000)) + ' мин' : ''}${ev.total_cost_usd ? ' · ' + money(ev.total_cost_usd) : ''}`, 'note')
+  if (ev.type === 'bot_user') { closeChoices(ev.text); add(md(ev.text), 'msg user', 'user') }
+  if (ev.type === 'bot_note' && !/^(Ждёт вашего ответа|Запуск|Готово)$/.test(ev.text)) add(esc(ev.text), 'note')
+  if (ev.type === 'bot_result' && ev.closed) return add(esc(ev.text), 'result', 'bot')
+  if (ev.type === 'bot_result' && !('pr' in ev)) return
+  if (ev.type === 'bot_result') add(ev.pr ? `PR открыт — <a href="${esc(ev.pr)}" target="_blank">${esc(ev.pr.replace('https://github.com/', ''))}</a>` : `PR не появился (ветка <code>${esc(ev.branch)}</code>). Причина — выше.`, 'result' + (ev.pr ? '' : ' bad'), 'bot')
+  if (ev.type === 'bot_error') add(`${esc(ev.text)}${ev.code === 'dirty' ? ' — нажмите «Отбросить» на главной и повторите.' : ''}`, 'result bad', 'bot')
+  if (ev.type === 'bot_stderr') add(`<details><summary>Сообщения об ошибках</summary><pre>${esc(ev.text)}</pre></details>`, 'tool')
+  if (ev.type === 'bot_raw' && ev.text.trim()) add(`<pre>${esc(ev.text)}</pre>`, 'tool')
+}
+
+let sideInfo = { todos: null, files: new Set() }
+function renderSide() {
+  if (!$('#sideLive')) return
+  $('#sideLive').innerHTML = `
+    <div class="side-card"><h4>План</h4>${sideInfo.todos?.length ? `<ul class="todos">${sideInfo.todos.map((t) => `<li class="${t.status}">${esc(t.content)}</li>`).join('')}</ul>` : '<div class="side-empty">Появится, когда бот его составит</div>'}</div>
+    <div class="side-card"><h4>Изменённые файлы${sideInfo.files.size ? ' · ' + sideInfo.files.size : ''}</h4>${sideInfo.files.size ? `<ul class="files">${[...sideInfo.files].map((f) => `<li title="${esc(f)}">&lrm;${esc(f)}</li>`).join('')}</ul>` : '<div class="side-empty">Пока ничего</div>'}</div>`
+}
+function trackSide(ev) {
+  if (ev.type !== 'assistant') return
+  let changed = false
+  for (const c of ev.message?.content || []) {
+    if (c.type !== 'tool_use') continue
+    if (c.name === 'TodoWrite') { sideInfo.todos = c.input?.todos || []; changed = true }
+    if (['Edit', 'MultiEdit', 'Write'].includes(c.name) && c.input?.file_path) {
+      const f = short(c.input.file_path)
+      if (!f.startsWith('/') && !sideInfo.files.has(f)) { sideInfo.files.add(f); changed = true }
+    }
+  }
+  if (changed && !replaying) renderSide()
+}
+function actsHTML(r) {
+  return [
+    ['failed', 'stopped', 'limited'].includes(r.status) && r.sessionId ? `<button class="btn primary sm" data-act="continue" title="Та же сессия и ветка — доделает начатое">${r.status === 'limited' ? 'Продолжить сейчас' : 'Продолжить'}</button>` : '',
+    ['failed', 'stopped', 'skipped', 'limited'].includes(r.status) ? '<button class="btn sm" data-act="retry">Заново</button>' : '',
+    r.status === 'running' || r.status === 'queued' ? '<button class="btn sm" data-act="stop">Остановить</button>' : '',
+    r.status === 'waiting' ? '<button class="btn sm" data-act="close">Завершить разговор</button>' : '',
+    r.status !== 'running' ? '<button class="btn ghost sm" data-act="delete">Убрать из истории</button>' : '',
+  ].filter(Boolean).join('')
+}
+function renderView() {
+  const r = state.runs.find((x) => x.id === selected)
+  if (!r) return goHome()
+  runAi = r.ai || 'claude'; applyAi(runAi); renderSidebar()
+  const t = runTok(r)
+  const pct = r.ctx ? Math.round(r.ctx / (r.ctxMax || 200000) * 100) : 0
+  const dur = r.startedAt ? Math.max(1, Math.round(((r.endedAt || Date.now()) - r.startedAt) / 60000)) : 0
+  const why = r.reason ? `<div class="why ${r.status === 'limited' ? 'limited' : ''}">${esc(r.reason)}${r.status === 'limited' && r.resumeAt ? ' Осталось ' + until(r.resumeAt).replace('через ', '') + '.' : ''}</div>` : r.note ? `<div class="why ok">${esc(r.note)}</div>` : ''
+  const acts = actsHTML(r)
+  const head = `<div class="rv-title"><button class="btn ghost icon" id="back" title="Назад (Esc)">${icon('back')}</button><h2>${esc(r.title)}</h2><span class="badge ${r.status}">${STATUS[r.status] || r.status}</span></div>
+    <div class="rv-acts narrow-only">${r.prUrl ? `<a class="btn sm" href="${esc(r.prUrl)}" target="_blank">PR ↗</a>` : ''}${acts}</div>${why}`
+  const side = `<div class="side-card"><dl class="kv">
+        <dt>ИИ</dt><dd>${aiName(r.ai)}${r.model && !/^codex/.test(r.model) ? ' · ' + esc(r.model.replace(/^claude-/, '')) : ''}</dd>
+        ${r.repo ? `<dt>Репозиторий</dt><dd title="${esc(r.repo)}">${esc(r.repo.split('/')[1])}</dd>` : ''}
+        ${r.branch ? `<dt>Ветка</dt><dd title="${esc(r.branch)}">${esc(r.branch)}</dd>` : ''}
+        ${r.prUrl ? `<dt>PR</dt><dd><a href="${esc(r.prUrl)}" target="_blank">#${esc(r.prUrl.split('/').pop())} ↗</a></dd>` : ''}
+        ${(t.in || t.out) ? `<dt>Токены</dt><dd title="Вход ${t.in.toLocaleString('ru')} (из кэша ${r.tokIn ? Math.round((r.tokCached || 0) / r.tokIn * 100) : 0}%) · выход ${t.out.toLocaleString('ru')}">${tok(t.in + t.out)}</dd>` : ''}
+        ${r.cost ? `<dt>Стоимость</dt><dd>${money(r.cost)}</dd>` : ''}
+        ${dur ? `<dt>Время</dt><dd>${dur} мин</dd>` : ''}
+      </dl>
+      ${pct ? `<div><dl class="kv" style="margin-bottom:5px"><dt>Контекст</dt><dd>${pct}%</dd></dl><div class="ctxbar ${pct > 70 ? 'warn' : ''}"><i style="width:${Math.min(100, pct)}%"></i></div></div>` : ''}
+      ${acts ? `<div class="side-acts">${acts}</div>` : ''}</div>`
+  if ($('.rv')?.dataset.id === r.id) { $('.rv-head').innerHTML = head; $('#sideStatic').innerHTML = side }
+  else {
+    sideInfo = { todos: null, files: new Set() }; lastWho = null
+    $('#main').innerHTML = `<div class="rv" data-id="${r.id}">
+      <div class="rv-main"><div class="rv-head">${head}</div><div class="feed" id="feed"></div><div class="dock" id="dock"></div></div>
+      <aside class="rv-side"><div id="sideStatic">${side}</div><div id="sideLive" style="display:grid;gap:12px"></div></aside></div>`
+    renderSide()
+    feedEl = $('#feed'); tools.clear(); openChoices = []
+    es?.close(); es = new EventSource('/api/events?run=' + r.id)
+    replaying = true
+    es.onmessage = (m) => {
+      const d = JSON.parse(m.data)
+      if (d.type === 'event') { onEvent(d.ev); trackSide(d.ev) }
+      if (d.type === 'replayed') { replaying = false; renderSide(); $('#scroll').scrollTop = $('#scroll').scrollHeight }
+    }
+  }
+  const dock = $('#dock')
+  const canReply = r.sessionId && ['waiting', 'done', 'failed'].includes(r.status) && !['issue', 'pr'].includes(r.kind)
+  const want = r.status === 'running' ? 'typing' : canReply ? 'reply' : ''
+  if (dock.dataset.want !== want) {
+    dock.dataset.want = want
+    dock.innerHTML = want === 'typing' ? '<div class="typing"><span class="st running"></span>Работает — можно закрыть вкладку</div>'
+      : want === 'reply' ? `<div class="composer"><form id="replyForm"><textarea id="replyText" rows="1" placeholder="Ответ…  ${isMac ? '⌘' : 'Ctrl'}↵ — отправить"></textarea><button class="btn primary">Ответить</button></form></div>` : ''
+    $('#replyText')?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('#replyForm').requestSubmit() })
+    $('#replyForm')?.addEventListener('submit', async (e) => {
+      e.preventDefault(); const text = $('#replyText').value.trim(); if (!text) return
+      try { await api(`/api/runs/${r.id}/reply`, { text }); $('#replyText').value = '' } catch (err) { toast(err.message) }
+    })
+  }
+}
+$('#main').addEventListener('click', async (e) => {
+  if (e.target.closest('#back')) return goHome()
+  const act = e.target.closest('[data-act]')?.dataset.act; if (!act) return
+  if (act === 'delete' && !confirm('Убрать запуск из истории?')) return
+  try { await api(`/api/runs/${selected}/${act}`, {}); if (act === 'delete') goHome() } catch (err) { toast(err.message) }
+})
+function select(id) { selected = id; history.pushState(null, '', '#' + id); $('#scroll').scrollTop = 0; renderView() }
+function goHome() { selected = null; history.pushState(null, '', '#'); renderHome(); $('#scroll').scrollTop = 0 }
+window.addEventListener('popstate', () => { const h = location.hash.slice(1); if (h && state.runs.some((r) => r.id === h)) { selected = h; renderView() } else { selected = null; renderHome() } })
+
+// ---------- настройки ----------
+$('#setBtn').onclick = () => openSettings()
+$('#drawerClose').onclick = () => $('#drawer').close()
+$('#drawer').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close() })
+async function openSettings(page = 'main') {
+  let st; try { st = await api('/api/settings') } catch (e) { return toast(e.message) }
+  const c = st.config, t = st.token; cfg = c; renderAiSwitch()
+  const ai = c.ai === 'codex' ? 'codex' : 'claude'
+  if (ai === 'codex') await loadCodex()
+  const seg = (k, opts) => `<div class="seg" data-seg="${k}">${opts.map(([v, l]) => `<button type="button" data-v="${v}" class="${String(c[k] ?? '') === v ? 'on' : ''}">${l}</button>`).join('')}</div>`
+  const sw = (k) => `<label class="sw"><input type="checkbox" data-k="${k}" ${c[k] ? 'checked' : ''}><span></span></label>`
+  const set = (lbl, help, ctl) => `<div class="set"><div class="lbl">${lbl}${help ? `<small>${help}</small>` : ''}</div>${ctl}</div>`
+  const keys = `<div class="grp"><h4>Клавиши</h4><div class="small" style="display:grid;gap:6px">
+        <span><kbd>${isMac ? '⌘' : 'Ctrl '}K</kbd> или <kbd>/</kbd> — поиск и команды</span><span><kbd>N</kbd> — новая задача · <kbd>${isMac ? '⌘' : 'Ctrl '},</kbd> — настройки</span>
+        <span><kbd>${isMac ? '⌘' : 'Ctrl '}↵</kbd> — запустить / ответить · <kbd>1–9</kbd> — вариант · <kbd>Esc</kbd> — назад</span></div></div>`
+  const common = `<div class="grp"><h4>Память бота</h4>${set(esc(curRepo), 'Что бот помнит об этом репозитории — общая для Claude и Codex', '<button class="btn" data-page="memory">Открыть</button>')}</div>
+      <div class="grp"><h4>Уведомления</h4>${set('Уведомления macOS', 'Когда задачи закончились', sw('notify'))}</div>${keys}`
+  const head = `<div class="grp">${set('Кто работает', 'Настройки ниже — для выбранного ИИ', `<div class="seg" id="drawerAi"><button data-ai="claude" class="${ai === 'claude' ? 'on' : ''}">Claude</button><button data-ai="codex" class="${ai === 'codex' ? 'on' : ''}">Codex</button></div>`)}</div>`
+  let body
+  if (page === 'memory') {
+    body = `<div class="grp mem"><p class="small" style="margin:0 0 10px">Что бот узнал в прошлых задачах — подмешивается в каждый запуск (и Claude, и Codex). Бот дописывает сам; можно добавить свои правила.</p>
+        <textarea id="memText" spellcheck="false"></textarea>
+        <div class="set"><span class="small lbl" id="memInfo"></span><button class="btn" data-page="main">Назад</button><button class="btn primary" id="memSave">Сохранить</button></div></div>`
+  } else if (ai === 'codex') {
+    const models = codexInfo?.models || []
+    const pickModel = (k) => `<select data-k="${k}" style="width:190px"><option value="">${k === 'codexChatModel' ? 'как для задач' : 'по умолчанию Codex'}</option>${models.map((m) => `<option value="${esc(m.slug)}" ${c[k] === m.slug ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>`
+    const effortsOf = (slug) => (models.find((m) => m.slug === slug) || models[0] || { efforts: ['low', 'medium', 'high'] }).efforts
+    const EN = { minimal: 'Минимальные', low: 'Низкие', medium: 'Средние', high: 'Высокие', xhigh: 'Очень высокие', max: 'Максимальные', ultra: 'Ультра' }
+    const effSeg = (k, slug) => `<select data-k="${k}" style="width:190px">${[['', 'по умолчанию модели'], ...effortsOf(slug).map((e) => [e, EN[e] || e])].map(([v, l]) => `<option value="${v}" ${String(c[k] ?? '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`
+    const lg = codexInfo?.login
+    const lim = codexInfo?.limits
+    const win = (w) => (w?.windowMin >= 10000 ? 'неделя' : `${Math.round((w?.windowMin || 300) / 60)} ч`)
+    body = head + `<div class="grp"><h4>Codex</h4>
+        <div class="tok-line">${lg?.ok ? `<span class="ok-t">✓ Вход через ${esc(lg.text)}</span>` : `<span class="bad-t">Не выполнен вход — в терминале: <code>codex login</code></span>`}<span class="spacer"></span>${lim ? `<span class="small">${[lim.primary, lim.secondary].filter(Boolean).map((w) => `${win(w)}: ${w.pct}%`).join(' · ')}</span>` : ''}</div>
+        <p class="small" style="margin:0">Платит подписка ChatGPT — цены в $ нет, считаются токены. Правила, память и запреты — те же, что у Claude.</p></div>
+      <div class="grp"><h4>Задачи</h4>
+        ${set('Модель', '', pickModel('codexModel'))}
+        ${set('Усилия', 'Сколько модель думает', effSeg('codexEffort', c.codexModel))}
+        ${set('Усилия по размеру', 'size:s → низкие, m → средние, l → высокие', sw('sizeModels'))}</div>
+      <div class="grp"><h4>Обсуждения и баги</h4>
+        ${set('Модель', '', pickModel('codexChatModel'))}
+        ${set('Усилия', '', effSeg('codexChatEffort', c.codexChatModel || c.codexModel))}</div>` + common
+  } else {
+    const MODELS = [['haiku', 'Haiku'], ['sonnet', 'Sonnet'], ['opus', 'Opus']]
+    const EFF = [['low', 'Низк.'], ['medium', 'Сред.'], ['high', 'Выс.']]
+    body = head + `<div class="grp"><h4>Задачи</h4>
+        ${set('Модель по размеру', 'size:s → Haiku, m → Sonnet, l → Opus', sw('sizeModels'))}
+        ${set('Модель', 'Без метки размера', seg('ticketModel', MODELS))}
+        ${set('Усилия', '', seg('ticketEffort', EFF))}
+        ${set('Предел на задачу, $', 'Дальше — остановится, можно «Продолжить»', `<input type="number" min="0.5" max="100" step="0.5" data-k="budget" value="${c.budget}">`)}</div>
+      <div class="grp"><h4>Обсуждения и баги</h4>
+        ${set('Модель', '', seg('chatModel', [['', 'Авто'], ...MODELS]))}
+        ${set('Усилия', '', seg('chatEffort', [['', 'Авто'], ...EFF]))}</div>
+      <div class="grp"><h4>Вход в Claude</h4>
+        <div class="tok-line">${t.set ? `<span class="ok-t">✓ Токен задан</span><span class="small">…${esc(t.hint.slice(-4))}</span><span class="spacer"></span><button class="btn sm" id="tokCheck">Проверить</button><button class="btn ghost sm" id="tokDel">Удалить</button>` : '<span class="bad-t">Токен не задан — используется обычный вход</span>'}</div>
+        <div class="set"><input type="password" id="tokIn" placeholder="${t.set ? 'Заменить: sk-ant-…' : 'Токен из claude setup-token'}" autocomplete="off" spellcheck="false"><button class="btn primary" id="tokSave">Сохранить</button></div>
+        <div class="small" id="tokMsg"></div></div>
+      <div class="grp"><h4>Терминал</h4>${set('Code Mode', 'Экспериментально, только для bot в терминале', sw('codeMode'))}</div>` + common
+  }
+  $('#drawerTitle').textContent = page === 'memory' ? 'Память · ' + curRepo.split('/')[1] : 'Настройки · ' + aiName(ai)
+  $('#drawerBody').innerHTML = body
+  if (!$('#drawer').open) $('#drawer').showModal()
+  const save = async (k, v) => { try { await api('/api/settings', { [k]: v }); cfg[k] = v; toast('Сохранено') } catch (e) { toast(e.message) } }
+  for (const el of $('#drawerBody').querySelectorAll('[data-k]')) el.addEventListener('change', async () => {
+    await save(el.dataset.k, el.type === 'checkbox' ? el.checked : el.value)
+    if (['codexModel', 'codexChatModel'].includes(el.dataset.k)) openSettings()   // у другой модели — свои уровни усилий
+  })
+  for (const g of $('#drawerBody').querySelectorAll('[data-seg]')) g.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-v]'); if (!b) return
+    for (const x of g.children) x.classList.toggle('on', x === b)
+    save(g.dataset.seg, b.dataset.v)
+  })
+  $('#drawerAi')?.addEventListener('click', (e) => { const a = e.target.closest('[data-ai]')?.dataset.ai; if (a) setAi(a) })
+  for (const b of $('#drawerBody').querySelectorAll('[data-page]')) b.onclick = () => openSettings(b.dataset.page)
+  if (page === 'memory') {
+    api('/api/memory?repo=' + encodeURIComponent(curRepo)).then((m) => { $('#memText').value = m.text; $('#memInfo').textContent = `~${Math.round(m.text.length / 3.5)} токенов на запуск` }).catch(() => {})
+    $('#memSave').onclick = async () => { try { await api('/api/memory', { text: $('#memText').value, repo: curRepo }); toast('Память сохранена') } catch (e) { toast(e.message) } }
+    return
+  }
+  if (ai !== 'claude') return
+  const msg = (text, ok) => { $('#tokMsg').innerHTML = `<span class="${ok ? 'ok-t' : 'bad-t'}">${esc(text)}</span>` }
+  $('#tokSave').onclick = async () => {
+    const token = $('#tokIn').value.trim(); if (!token) return
+    $('#tokSave').disabled = true; msg('Проверяю токен…', true)
+    try { await api('/api/settings/token', { token }); toast('Токен сохранён'); openSettings() } catch (e) { msg(e.message, false) } finally { if ($('#tokSave')) $('#tokSave').disabled = false }
+  }
+  if ($('#tokCheck')) $('#tokCheck').onclick = async () => { msg('Проверяю…', true); const r = await api('/api/settings/token', { check: true }).catch((e) => ({ ok: false, error: e.message })); msg(r.ok ? '✓ Работает' : 'Не работает: ' + r.error, r.ok) }
+  if ($('#tokDel')) $('#tokDel').onclick = async () => { if (!confirm('Удалить токен? Бот вернётся к обычному входу.')) return; await api('/api/settings/token', { remove: true }); openSettings() }
+}
+
+// ---------- несохранённое в копии бота ----------
+async function checkRepo() {
+  try {
+    const { status, busy } = await api('/api/repo-status?repo=' + encodeURIComponent(curRepo))
+    const b = $('#banner'); if (!b) return
+    b.innerHTML = status && !busy ? `<div class="banner"><div style="flex:1"><b>В копии бота остались несохранённые изменения</b> — следующий запуск не начнётся.<pre>${esc(status)}</pre></div><button class="btn sm" id="resetBtn">Отбросить</button></div>` : ''
+    $('#resetBtn')?.addEventListener('click', async () => { if (!confirm('Удалить эти изменения из копии бота? Ваша рабочая папка не затрагивается.')) return; await api('/api/reset', { repo: curRepo }); checkRepo() })
+  } catch {}
+}
+
+// ---------- репозитории и старт ----------
+let curRepo = '', repos = []
+async function loadGh(fresh) {
+  try {
+    gh = await api('/api/github?repo=' + encodeURIComponent(curRepo) + (fresh ? '&fresh' : ''))
+    if (!selected) { refreshHome(); if (['issue', 'queue', 'chain', 'pr'].includes(mode) && $('#form')) rerenderComposer() }
+  } catch {}
+}
+function setRepos(list, def) {
+  repos = list
+  const saved = ls.get('bot:repo')
+  curRepo = list.includes(saved) ? saved : list.includes(def) ? def : list[0]
+  $('#repo').innerHTML = list.map((r) => `<option value="${esc(r)}" ${r === curRepo ? 'selected' : ''}>${esc(r)}</option>`).join('')
+  $('#repo').disabled = list.length < 2
+}
+$('#repo').onchange = (e) => { curRepo = e.target.value; ls.set('bot:repo', curRepo); gh = { issues: [], prs: [] }; if (!selected) renderHome(); loadGh() }
+const live = new EventSource('/api/events')
+live.onmessage = (m) => {
+  const d = JSON.parse(m.data)
+  if (d.type !== 'state') return
+  const wasBusy = !!state.current
+  state = d; renderLimits(); renderSidebar()
+  if (selected) renderView(); else refreshHome()
+  if ($('#pal').open) renderPalette()
+  if (wasBusy && !d.current) { checkRepo(); loadGh(true) }
+}
+;(async () => {
+  const [s, st] = await Promise.all([api('/api/state'), api('/api/settings').catch(() => ({ config: {} }))])
+  state = s; cfg = st.config || {}
+  setRepos(s.repos || [s.repo], s.repo)
+  renderAiSwitch(); renderLimits(); loadCodex().then(renderLimits)
+  const h = location.hash.slice(1)
+  if (h && s.runs.some((r) => r.id === h)) { selected = h; renderView() } else renderHome()
+  loadGh()
+  setInterval(() => { renderLimits(); if (!selected) refreshHome() }, 60000)
+})()
+</script>
+</body>
+</html>

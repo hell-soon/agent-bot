@@ -1,0 +1,105 @@
+# agent-bot
+
+Свой ИИ-бот для GitHub: Claude Code или Codex работает **в фоне, от имени отдельного бота** (`имя[bot]`) в ваших репозиториях и приносит **pull request'ы** — сливаете вы. Управление — из терминала (`bot …`) или из панели в браузере (`bot ui`).
+
+- задача из issue → ветка → код → проверки → PR;
+- очереди и цепочки задач, правки PR по комментариям ревью;
+- обсуждение фичи вопросами с вариантами ответа → спецификация → issue;
+- живая лента: что бот читает, правит, запускает; план и изменённые файлы;
+- лимиты подписки, токены, цена; при обрыве или лимите — «Продолжить» с того же места;
+- память по каждому репозиторию: бот дописывает, что узнал, и в следующий раз тратит меньше;
+- поиск и команды как в Spotlight (⌘K).
+
+Работает на macOS (на Linux — с мелкими правками: уведомления, `caffeinate`).
+
+## Как это устроено
+
+```
+ вы ── bot ui (127.0.0.1:4545) / bot … в терминале
+          │
+          ▼
+     agent.sh ── Claude Code или Codex (в фоне, свои правила и запреты)
+          │        │
+          │        └─ рабочая копия репозитория: work/<owner>__<repo>
+          ▼
+     GitHub App «имя[bot]» ── токен на 1 час на каждый git push / gh
+```
+
+Бот — это **GitHub App**, а не второй аккаунт: его нельзя «ограничить» как новый аккаунт, права — только на выбранные репозитории, в истории видно, что работал бот.
+
+## Установка
+
+### 1. GitHub App
+
+1. GitHub → **Settings → Developer settings → GitHub Apps → New GitHub App**.
+2. Имя — как будет называться бот (`имя[bot]`). Homepage URL — любой, например ссылка на этот репозиторий.
+3. **Webhook → Active** — снять галочку.
+4. **Repository permissions**: Contents, Pull requests, Issues — **Read and write** (Metadata — Read-only само).
+5. **Where can this GitHub App be installed?** — Only on this account → **Create GitHub App**.
+6. На странице приложения: запишите **App ID**, внизу — **Generate a private key** (скачается `.pem`).
+7. Слева **Install App** → Install → **Only select repositories** → выберите репозитории для бота.
+
+### 2. Сам бот
+
+```bash
+git clone https://github.com/hell-soon/agent-bot.git ~/agent-bot
+cd ~/agent-bot && ./setup.sh
+```
+
+`setup.sh` проверит зависимости (`git gh jq node openssl curl` и `claude`), спросит App ID и путь к `.pem`, сам узнает имя бота и доступные репозитории, создаст `bot.env` и команду `bot` в `~/.local/bin`. Повторный запуск безопасен.
+
+### 3. Вход в ИИ
+
+- **Claude** (обязательно): `claude` → войти. Для работы без присмотра лучше `claude setup-token` и вставить токен в `bot ui` → Настройки.
+- **Codex** (по желанию): `brew install codex && codex login`.
+
+### 4. Запуск
+
+```bash
+bot ui      # панель в браузере
+bot help    # команды терминала
+```
+
+## Команды
+
+```
+bot ui                  панель в браузере (bot ui stop — выключить)
+bot                     обычная сессия от имени бота
+bot 5                   сделать issue #5
+bot q 5 6 7             очередь: каждое — свой PR от main, без вопросов
+bot chain 5 6 7         цепочка: каждое следующее поверх предыдущего
+bot q ready             все открытые issue с меткой ready-for-agent
+bot pr 7 ["текст"]      поправить PR #7 (по ревью или как сказано)
+bot idea "текст"        обсудить фичу (вопросы → спецификация → issue)
+bot bug "текст"         разобрать баг
+bot -r owner/repo …     в другом репозитории (или запуск из папки репозитория)
+bot --ref owner/x …     подсмотреть в другом репозитории (только чтение)
+BOT_AI=codex bot 5      разово другим ИИ;  BOT_MODEL=opus BOT_EFFORT=high …
+```
+
+Метки размера issue `size:s` / `size:m` / `size:l` выбирают модель: Haiku / Sonnet / Opus (у Codex — усилия).
+
+Скиллы [mattpocock/skills](https://github.com/mattpocock/skills) (`/implement`, `/triage`, `/to-tickets` …) подхватываются, если плагин установлен в Claude Code. Для нового репозитория: `bot -r owner/repo "/setup-matt-pocock-skills"`.
+
+## Правила проекта
+
+Бот читает `AGENTS.md` / `CLAUDE.md` репозитория: там должны быть команды проверки (typecheck, тесты, сборка). Нет файла — бот возьмёт скрипты из `package.json`. Сделать его: `bot -r owner/repo "/init"`.
+
+## Безопасность
+
+- В фоне бот может только править файлы в своей копии, `git`, `gh`, `npm`/`npx`/`node` и чтение. Запрещены `gh pr merge`, force push, push в `main`.
+- У **Codex** таких запретов по командам нет — только песочница и правила. Поэтому **защитите `main`**: репозиторий → Settings → Rules → Rulesets → New branch ruleset → Target: default branch → **Restrict updates**, **Block force pushes**; в Bypass list — себя (Repository admin, Always allow). Тогда в `main` попадает только то, что сливаете вы.
+- Секреты — только у вас: `keys/` (ключ приложения, токен Claude) и `bot.env` в git не попадают.
+
+## Где что лежит
+
+| Путь | Что |
+|---|---|
+| `bot.env` | App ID, имя бота, репозиторий по умолчанию (создаёт `setup.sh`) |
+| `keys/` | ключ GitHub App, токен Claude |
+| `config.json` | настройки из панели |
+| `memory/` | память бота по репозиториям |
+| `work/`, `refs/` | рабочие и справочные копии репозиториев |
+| `logs/` | журналы запусков |
+
+Удалить: `rm ~/.local/bin/bot && rm -rf ~/agent-bot`, затем удалить приложение на GitHub.

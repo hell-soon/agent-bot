@@ -1,0 +1,14 @@
+# личное и секреты
+bot.env
+bot.env.tmp
+keys/
+config.json
+memory/
+# рабочие копии и журналы
+work/
+refs/
+logs/
+node_modules/
+.DS_Store
+bot.env.bak
+ui/*.tmp
