@@ -13,6 +13,7 @@ import { codeGraph } from './code-graph.mjs'
 import { createDependencySchedule, dependencySettings } from './dependencySchedule.mjs'
 import { recoverDependencyPull, updateDependencies } from './dependencyUpdates.mjs'
 import { createDocReview } from './docReview.mjs'
+import { applyOp as boardOp, approvedPlanText, boardForBot, mergeBotPlan, parsePlan } from './featurePlan.mjs'
 import { impactMarkdown, mapMarkdown, sliceOf } from './project-map.mjs'
 import { pickRoutes, shoot, VIEWPORTS } from './screens.mjs'
 import * as skills from './skills.mjs'
@@ -405,8 +406,11 @@ const KINDS = {
   triage: () => ['_new', '/triage'],
   tickets: () => ['_new', '/to-tickets'],
   task: r => ['_new', r.text],
+  // «Разработка фичи»: сначала план на доске (BOT_MODE=plan — без правок), код — после «Начать работу»
+  feature: r => ['_new', `Разработка фичи. Изучи код и составь план (код пока не меняй):\n${r.text}`],
 }
 const CHAT = new Set([
+  'feature',
   'idea',
   'bug',
   'triage',
@@ -415,6 +419,8 @@ const CHAT = new Set([
 ])
 
 let current = null // { run, child }
+// «Разработка фичи» до «Начать работу»: бот только планирует, код не меняет
+const planning = run => run.kind === 'feature' && !run.planApproved
 
 function newRun(fields) {
   const run = {
@@ -432,7 +438,7 @@ function newRun(fields) {
 
 // ---------- карта проекта перед задачей и «Что может задеть» в PR (из графа импортов, без ИИ) ----------
 let mapping = false
-const MAP_KINDS = new Set(['issue', 'pr', 'task', 'bug', 'idea'])
+const MAP_KINDS = new Set(['issue', 'pr', 'task', 'bug', 'idea', 'feature'])
 async function prepareMap(run) {
   if (readConfig().repos?.[run.repo]?.map === false || !MAP_KINDS.has(run.kind) || !isRepo(run.repo))
     return
@@ -687,7 +693,7 @@ function next() {
           : []),
       ]
     : run.reply
-      ? ['_resume', run.sessionId, run.reply]
+      ? ['_resume', run.sessionId, planning(run) ? run.reply + boardForBot(run.board) : run.reply]
       : KINDS[run.kind](run)
   const sendFiles = cont
     ? null
@@ -743,6 +749,8 @@ function next() {
     env.BOT_MAP = run.mapFile
   if (run.kind === 'idea')
     env.BOT_MODE = 'idea'
+  if (planning(run))
+    env.BOT_MODE = 'plan'
   const turnStart = Date.now()
   run.outNew = []
   const child = spawn(AGENT, args, {
@@ -827,6 +835,16 @@ function next() {
       run.cost = (run.cost || 0) + (ev.total_cost_usd || 0)
       run.turns = (run.turns || 0) + (ev.num_turns || 0)
       run.lastResult = ev.is_error ? 'error' : 'ok'; run.lastText = String(ev.result || '').slice(0, 400)
+      // план бота → доска фичи (первый — сразу, следующие — предложениями)
+      const plan = planning(run) && !ev.is_error && parsePlan(ev.result)
+      if (plan) {
+        const had = run.board?.items?.length
+        run.board = mergeBotPlan(run.board, plan)
+        appendEvent(run, { type: 'bot_note', text: had ? `План: предложений на доске — ${run.board.suggestions.length}` : `План на доске: ${plan.items.length} элементов`, at: Date.now() })
+      }
+      else if (planning(run) && /```plan/.test(String(ev.result || ''))) {
+        appendEvent(run, { type: 'bot_note', text: 'Блок плана не прочитался (битый JSON) — попросите бота прислать план заново', at: Date.now() })
+      }
       // точные цифры хода (по всем моделям, включая подагентов)
       let tin = 0; let tout = 0; let cached = 0
       for (const m of Object.values(ev.modelUsage || {})) {
@@ -2013,6 +2031,7 @@ const server = http.createServer(async (req, res) => {
         triage: 'Разбор issue',
         tickets: 'Нарезать на тикеты',
         task: 'Задача',
+        feature: 'Разработка фичи',
       }
       made.push(newRun({
         kind: b.kind,
@@ -2206,6 +2225,33 @@ ${ARCH_FORMAT}`,
     catch (e) { return json(res, { error: e.message }, 400) }
     return json(res, { error: 'Нечего делать' }, 400)
   }
+  // Доска «Разработки фичи»: правки человека и разбор предложений бота; «Начать работу» — утверждение плана
+  const bm = p.match(/^\/api\/runs\/(\d+)\/(board|approve)$/)
+  if (req.method === 'POST' && bm) {
+    const run = byId(bm[1])
+    if (!run || run.kind !== 'feature')
+      return json(res, { error: 'Нет такой задачи' }, 404)
+    if (run.planApproved)
+      return json(res, { error: 'План уже утверждён — бот работает по нему' }, 409)
+    if (bm[2] === 'board') {
+      const r = boardOp(run.board, await body(req))
+      if (r.error)
+        return json(res, { error: r.error }, 400)
+      run.board = r.board; pushState()
+      return json(res, { board: r.board, id: r.id })
+    }
+    if (!run.sessionId || ['running', 'queued'].includes(run.status))
+      return json(res, { error: 'Дождитесь, пока бот закончит план' }, 409)
+    if (!run.board?.items?.some(i => i.type === 'step'))
+      return json(res, { error: 'В плане нет ни одного шага' }, 400)
+    if (run.board.suggestions.length)
+      return json(res, { error: 'Сначала примите или отклоните предложения бота' }, 400)
+    run.planApproved = true
+    run.reply = approvedPlanText(run.board, run.text)
+    run.status = 'queued'
+    pushState(); next()
+    return json(res, { ok: true })
+  }
   const m = p.match(/^\/api\/runs\/(\d+)\/(reply|stop|close|retry|delete|continue)$/)
   if (req.method === 'POST' && m) {
     const run = byId(m[1]); if (!run)
@@ -2217,6 +2263,10 @@ ${ARCH_FORMAT}`,
       if (!run.sessionId || (!b.text && !files.length))
         return json(res, { error: 'Нечего продолжать' }, 400)
       run.reply = b.text || 'Посмотри вложения.'; run.replyFiles = files.length ? files : undefined; run.status = 'queued'
+      // вопрос из карточки доски — с привязкой к шагу
+      const item = b.step && b.text && run.board?.items?.find(i => i.id === b.step)
+      if (item)
+        run.reply = `Про ${item.type === 'note' ? 'заметку' : 'шаг'} «${item.title || item.text.slice(0, 60)}» (id ${item.id}): ${b.text}`
     }
     else if (act === 'stop') {
       if (current?.run === run) {
@@ -2248,7 +2298,7 @@ ${ARCH_FORMAT}`,
       ].includes(run.status)) {
         if (run.status === 'limited')
           run.status = 'stopped'
-        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, modelUsed, replyFiles, outSeen, outNew, codexImgs, mapDone, mapFile, fsdNew, ...rest } = run
+        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, modelUsed, replyFiles, outSeen, outNew, codexImgs, mapDone, mapFile, fsdNew, board, planApproved, ...rest } = run
         newRun(rest)
       }
     }

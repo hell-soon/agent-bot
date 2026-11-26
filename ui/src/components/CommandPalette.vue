@@ -137,6 +137,12 @@ const groups = computed(() => {
       run: go(() => newTask('idea')),
     },
     {
+      icon: 'feature',
+      title: 'Разработка фичи: план на доске…',
+      k: 'план доска',
+      run: go(() => newTask('feature')),
+    },
+    {
       icon: 'bug',
       title: 'Разобрать баг…',
       k: 'ошибка',

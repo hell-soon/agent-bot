@@ -4,6 +4,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowR
 import { buildFeed } from '../lib/feed'
 import { aiName, md, modKey, money, runTok, STATUS, tok, until } from '../lib/format'
 import { goHome, reply, resetRepo, runAction, selectedRun, store, toast } from '../lib/store'
+import FeatureBoard from './FeatureBoard.vue'
 import Icon from './Icon.vue'
 import PrSummary from './PrSummary.vue'
 import RunSchema from './RunSchema.vue'
@@ -296,6 +297,10 @@ function act(a: string) {
         </div>
       </header>
 
+      <feature-board
+        v-if="r.kind === 'feature'"
+        :run="r"
+      />
       <run-schema
         v-if="tab === 'schema'"
         :events="events"
