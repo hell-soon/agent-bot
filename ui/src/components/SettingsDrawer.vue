@@ -301,7 +301,11 @@ async function saveMem() {
               class="nav-row"
               @click="go('panel-update')"
             >
-              <span class="lbl">Обновление панели</span>
+              <span class="ic"><icon
+                name="refresh"
+                :size="16"
+              /></span>
+              <span class="lbl">Обновление панели<small>проверка и установка новой версии</small></span>
               <span class="chev">›</span>
             </button>
             <button
