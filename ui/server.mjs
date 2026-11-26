@@ -415,6 +415,8 @@ function next() {
   if (files?.length)
     env.BOT_FILES = files.join('\n')
   env.BOT_OUTBOX = outboxOf(run)
+  if (run.kind === 'idea')
+    env.BOT_MODE = 'idea'
   const turnStart = Date.now()
   run.outNew = []
   const child = spawn(AGENT, args, {

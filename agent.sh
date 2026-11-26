@@ -250,6 +250,20 @@ if [ -n "$BOT_REFS" ]; then
   OPTS[1]="$PROMPT"   # обновить --append-system-prompt
 fi
 [ -n "$OUTBOX_NOTE" ] && { PROMPT="$PROMPT$OUTBOX_NOTE"; OPTS[1]="$PROMPT"; }
+
+# «Фича» (BOT_MODE=idea или bot idea): только обсуждение → спецификация → issue, код не трогать
+[ "$1" = idea ] && BOT_MODE=idea
+if [ "$BOT_MODE" = idea ]; then
+  PROMPT="$PROMPT
+
+## Режим «Фича»: обсуждение, а не разработка
+Это обсуждение новой функции. Код НЕ пиши и файлы проекта НЕ меняй (можно только docs/: ADR и глоссарий, если этого просит скилл), ветки, коммиты и PR НЕ создавай — даже если всё ясно и человек ответил на все вопросы.
+1. Задавай вопросы по одному, пока не станет понятно, что и зачем делаем.
+2. Когда договорились — покажи короткую спецификацию (что делаем, что не делаем, критерии готовности) и спроси, всё ли верно.
+3. После «да» — заведи issue: gh issue create -R $REPO с этой спецификацией и меткой ready-for-agent (и size:s|m|l по объёму). Большую фичу — разбей на несколько issue (по одному на самостоятельный кусок, с порядком «после #N»).
+4. В конце дай ссылки на issue. Делать их будет отдельная задача — не ты сейчас."
+  OPTS[1]="$PROMPT"
+fi
 # Какой ИИ работает: claude (по умолчанию) или codex. BOT_AI=codex bot … — разово; в панели — ⚙ или у задачи.
 AI=${BOT_AI:-$(rcfg .ai)}; AI=${AI:-$(cfg .ai)}
 case "${AI:-claude}" in claude|codex) ;; *) echo "Неизвестный ИИ: $AI (claude | codex)" >&2; exit 1 ;; esac
@@ -365,6 +379,8 @@ AUTO=(-p --permission-mode acceptEdits
 # Свои разрешения (панель → Настройки → Разрешения): allowCmds / denyCmds — начала команд
 while IFS= read -r c; do [ -n "$c" ] && AUTO+=(--allowedTools "Bash($c:*)"); done < <(jq -r '.allowCmds[]? // empty' "$CONFIG" 2>/dev/null)
 while IFS= read -r c; do [ -n "$c" ] && AUTO+=(--disallowedTools "Bash($c:*)"); done < <(jq -r '.denyCmds[]? // empty' "$CONFIG" 2>/dev/null)
+# «Фича» — без коммитов, пуша и PR (Codex — по правилу в промпте)
+[ "$BOT_MODE" = idea ] && AUTO+=(--disallowedTools "Bash(git commit:*)" "Bash(git push:*)" "Bash(gh pr create:*)")
 STREAM=(--output-format stream-json --verbose)
 # Предохранитель: фоновая задача не потратит больше $BOT_BUDGET (по умолчанию $8) — дальше остановится, работу можно «Продолжить»
 B=${BOT_BUDGET:-$(cfg .budget)}; AUTO+=(--max-budget-usd "${B:-8}")
