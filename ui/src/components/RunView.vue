@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import type { FeedItem } from '../lib/feed'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, triggerRef } from 'vue'
+import { companionOn } from '../lib/companion'
 import { buildFeed } from '../lib/feed'
 import { aiName, md, modKey, money, runTok, STATUS, tok, until } from '../lib/format'
+import { moodOf } from '../lib/mood'
 import { goHome, reply, resetRepo, runAction, selectedRun, store, toast } from '../lib/store'
+import Companion from './Companion.vue'
 import FeatureBoard from './FeatureBoard.vue'
 import Icon from './Icon.vue'
 import PrSummary from './PrSummary.vue'
@@ -66,6 +69,8 @@ async function jump(ei: number) {
 const ai = computed(() => (r.value?.ai === 'codex'
   ? 'codex'
   : 'claude'))
+// эмоция мини-агента — по статусу запуска и последним событиям, одинаково для Claude и Codex
+const mood = computed(() => moodOf(r.value, events.value))
 // шапка «bot · Claude» перед первой репликой бота после реплики человека
 function showWho(i: number) {
   const it = feed.value.items[i]
@@ -334,16 +339,6 @@ function act(a: string) {
             v-html="md(it.text)"
           />
           <div
-            v-else-if="it.k === 'companion'"
-            :data-ei="it.ei"
-            class="msg"
-          >
-            <div class="who">
-              Мини-агент <span class="muted">· {{ it.mood }}</span>
-            </div>
-            {{ it.text }}
-          </div>
-          <div
             v-else-if="it.k === 'tool'"
             :data-ei="it.ei"
             class="tool"
@@ -501,6 +496,12 @@ function act(a: string) {
         </form>
       </div>
     </div>
+
+    <companion
+      v-if="companionOn"
+      :mood="mood"
+      :ai="aiName(ai)"
+    />
 
     <aside class="side">
       <div class="card">

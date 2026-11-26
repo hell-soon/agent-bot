@@ -12,7 +12,6 @@ import { FORMAT as ARCH_FORMAT, scan as archScan } from './arch-scan.mjs'
 import { codeGraph } from './code-graph.mjs'
 import { createDependencySchedule, dependencySettings } from './dependencySchedule.mjs'
 import { recoverDependencyPull, updateDependencies } from './dependencyUpdates.mjs'
-import { companionContext, reactToDialog } from './dialogCompanion.mjs'
 import { createDocReview } from './docReview.mjs'
 import { applyOp as boardOp, approvedPlanText, boardForBot, mergeBotPlan, parsePlan } from './featurePlan.mjs'
 import { parseQuestion, pauseBoard, resumeText } from './featureQuestion.mjs'
@@ -422,26 +421,6 @@ const CHAT = new Set([
   'task',
 ])
 
-const companionEnabled = repo => AIS.claude && readConfig().repos?.[repo]?.dialogCompanion === true
-
-async function postCompanionReaction(run) {
-  const repo = run.repo || repoOf()
-  if (!companionEnabled(repo))
-    return
-  const endedAt = run.endedAt
-  const stillWaiting = () => runs.includes(run) && run.endedAt === endedAt && run.status === 'waiting' && companionEnabled(repo)
-  const journal = await fs.promises.readFile(evFile(run.id), 'utf8')
-  if (!stillWaiting())
-    return
-  const context = companionContext(run.text, journal.trim().split('\n').map(line => JSON.parse(line)))
-  const env = { ...ENV }
-  if (!env.CLAUDE_CODE_OAUTH_TOKEN && fs.existsSync(TOKEN))
-    env.CLAUDE_CODE_OAUTH_TOKEN = fs.readFileSync(TOKEN, 'utf8').trim()
-  const reply = await reactToDialog(context, env)
-  if (reply && stillWaiting())
-    appendEvent(run, { type: 'bot_companion', ...reply })
-}
-
 let current = null // { run, child }
 // «Разработка фичи» до «Начать работу»: бот только планирует, код не меняет
 const planning = run => run.kind === 'feature' && !run.planApproved
@@ -843,7 +822,6 @@ function next() {
     }
   }
 
-  let hasCompanionInput = false
   readline.createInterface({ input: child.stdout }).on('line', (line) => {
     wd.last = Date.now()
     let ev
@@ -870,7 +848,6 @@ function next() {
       run.cost = (run.cost || 0) + (ev.total_cost_usd || 0)
       run.turns = (run.turns || 0) + (ev.num_turns || 0)
       run.lastResult = ev.is_error ? 'error' : 'ok'; run.lastText = String(ev.result || '').slice(0, 400)
-      hasCompanionInput = !ev.is_error && Boolean(String(ev.result || '').trim())
       // план бота → доска фичи (первый — сразу, следующие — предложениями)
       const plan = planning(run) && !ev.is_error && parsePlan(ev.result)
       if (plan) {
@@ -974,8 +951,6 @@ function next() {
     })
     pushState()
     notify(run)
-    if (run.status === 'waiting' && hasCompanionInput)
-      trackPanelWork(postCompanionReaction(run).catch(() => console.warn('Мини-агент: не удалось получить реакцию')))
     if (run.prUrl && run.status === 'done') {
       trackPanelWork(prReport(run)
         .then(r => r && (appendEvent(run, { type: 'bot_note', text: `${r === 'updated' ? 'Обновлён' : 'В PR —'} комментарий «Что может задеть»${run.fsdNew ? (run.fsdNew.length ? ` · новых нарушений FSD: ${run.fsdNew.length}` : ' · новых нарушений FSD нет') : ''}`, at: Date.now() }), pushState()))
@@ -1159,7 +1134,6 @@ function writeConfigRaw(patch) {
 // Настройки одного репозитория — config.repos["owner/repo"]
 const REPO_FIELDS = {
   ai: v => ['', 'claude', 'codex'].includes(v),
-  dialogCompanion: v => typeof v === 'boolean',
   ticketModel: v => ['', 'haiku', 'sonnet', 'opus'].includes(v),
   codexModel: v => typeof v === 'string' && /^[\w.:-]{0,60}$/.test(v),
   base: v => typeof v === 'string' && /^[\w./-]{0,100}$/.test(v),
