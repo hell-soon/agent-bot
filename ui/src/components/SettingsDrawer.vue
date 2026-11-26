@@ -3,6 +3,7 @@
 import type { DrawerPage } from '../lib/store'
 import { computed, ref, watch } from 'vue'
 import { api } from '../lib/api'
+import { companionOn, setCompanion } from '../lib/companion'
 import { aiName, modKey } from '../lib/format'
 import { bothAi, enabledSkills, loadCodex, saveSetting, setAi, store, toast } from '../lib/store'
 import Icon from './Icon.vue'
@@ -586,6 +587,20 @@ async function saveMem() {
               </div>
             </div>
           </template>
+
+          <div class="grp">
+            <h4>Панель</h4>
+            <div class="set">
+              <div class="lbl">
+                Мини-агент<small>Колобок в углу диалога показывает настроение ИИ — по ходу работы, без вызовов модели</small>
+              </div>
+              <label class="sw"><input
+                type="checkbox"
+                :checked="companionOn"
+                @change="setCompanion(($event.target as HTMLInputElement).checked)"
+              ><span /></label>
+            </div>
+          </div>
 
           <div class="grp">
             <h4>Клавиши</h4>
