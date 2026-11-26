@@ -12,7 +12,13 @@ const at = useAttach()
 const fileIn = ref<HTMLInputElement>()
 const dragging = ref(false)
 const m = computed(() => MODES[c.mode])
-const MAIN: Mode[] = ['task', 'issue', 'feature', 'bug', 'pr']
+const MAIN: Mode[] = [
+  'task',
+  'issue',
+  'feature',
+  'bug',
+  'pr',
+]
 const EXTRA: Mode[] = ['queue', 'chain', 'triage', 'tickets']
 const extraOpen = ref(false)
 const ai = ref('') // '' — как по умолчанию
