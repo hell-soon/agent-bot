@@ -58,7 +58,7 @@ export const MODES: Record<Mode, { name: string, ph?: string, hint: string, more
   },
 }
 
-export type DrawerPage = 'main' | 'memory' | 'repo' | 'skills' | 'rules' | 'perms' | 'notify' | 'access'
+export type DrawerPage = 'main' | 'memory' | 'repo' | 'skills' | 'rules' | 'perms' | 'notify' | 'access' | 'panel-update'
 export interface Skill { id: string, name: string, description: string, manual: boolean, source: string, sourceLabel: string, group: string, enabled: boolean, readonly: boolean }
 interface DocReviewStatus {
   enabled: boolean

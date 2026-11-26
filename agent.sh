@@ -55,12 +55,15 @@ if [ "$1" = ui ]; then
   mkdir -p "$LOGS"
   pid=$(lsof -ti tcp:$UI_PORT -sTCP:LISTEN 2>/dev/null || true)
   if [ "$2" = stop ]; then [ -n "$pid" ] && kill $pid && echo "Панель выключена" || echo "Панель не запущена"; exit 0; fi
-  if [ ! -f "$BOT_DIR/ui/dist/index.html" ]; then
-    echo "Собираю панель (один раз)…"
+  installed=$(git -C "$BOT_DIR" rev-parse HEAD 2>/dev/null || true)
+  built=$(cat "$BOT_DIR/ui/dist/.revision" 2>/dev/null || true)
+  if [ -z "$pid" ] && [ ! -s "$LOGS/ui/releases/active" ] && { [ ! -f "$BOT_DIR/ui/dist/index.html" ] || [ "$installed" != "$built" ]; }; then
+    echo "Собираю панель…"
     (cd "$BOT_DIR/ui" && npm install --no-audit --no-fund --silent && npm run build --silent) || { echo "Не удалось собрать панель: cd $BOT_DIR/ui && npm install && npm run build" >&2; exit 1; }
+    printf "%s" "$installed" > "$BOT_DIR/ui/dist/.revision"
   fi
   if [ -z "$pid" ]; then
-    nohup node "$BOT_DIR/ui/server.mjs" >> "$LOGS/ui.log" 2>&1 &
+    nohup node "$BOT_DIR/ui/panelUpdate.mjs" >> "$LOGS/ui.log" 2>&1 &
     for _ in 1 2 3 4 5 6 7 8 9 10; do sleep 0.3; lsof -ti tcp:$UI_PORT -sTCP:LISTEN >/dev/null 2>&1 && break; done
   fi
   echo "Панель: http://127.0.0.1:$UI_PORT"; open "http://127.0.0.1:$UI_PORT"; exit 0
