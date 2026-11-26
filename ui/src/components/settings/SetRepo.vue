@@ -4,6 +4,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { api } from '../../lib/api'
 import { ago, aiName } from '../../lib/format'
 import { bothAi, loadDocReview, store, toast } from '../../lib/store'
+import SetDependencyUpdates from './SetDependencyUpdates.vue'
 
 const s = reactive<Record<string, any>>({
   ai: '',
@@ -380,6 +381,12 @@ const AUTO = [
         @change="save({ checks: ($event.target as HTMLTextAreaElement).value })"
       />
     </div>
+
+    <set-dependency-updates
+      v-if="store.curRepo"
+      :key="store.curRepo"
+      :repo="store.curRepo"
+    />
 
     <div class="grp">
       <h4>Pull request</h4>

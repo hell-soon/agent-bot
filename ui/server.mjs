@@ -7,8 +7,11 @@ import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import readline from 'node:readline'
+import { stripVTControlCharacters } from 'node:util'
 import { FORMAT as ARCH_FORMAT, scan as archScan } from './arch-scan.mjs'
 import { codeGraph } from './code-graph.mjs'
+import { createDependencySchedule, dependencySettings } from './dependencySchedule.mjs'
+import { recoverDependencyPull, updateDependencies } from './dependencyUpdates.mjs'
 import { createDocReview } from './docReview.mjs'
 import { impactMarkdown, mapMarkdown, sliceOf } from './project-map.mjs'
 import { pickRoutes, shoot, VIEWPORTS } from './screens.mjs'
@@ -81,7 +84,22 @@ function collectOut(run, since) {
 // ---------- схема архитектуры: чтение из git базовой ветки (рабочая копия бота может быть на чужой ветке) ----------
 const archCache = new Map() // repo → { sha, data }
 const codeCache = new Map() // repo → { sha, graph }
-const sh = (cmd, args, opts = {}) => new Promise((resolve, reject) => execFile(cmd, args, { env: ENV, maxBuffer: 64 * 1024 * 1024, timeout: 60000, ...opts }, (e, out, err) => (e ? reject(new Error(String(err || e.message).trim().split('\n').pop())) : resolve(out))))
+function sh(cmd, args, { detailedError = false, ...opts } = {}) {
+  return new Promise((resolve, reject) => execFile(cmd, args, {
+    env: ENV,
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: 60000,
+    ...opts,
+  }, (error, out, err) => {
+    if (!error)
+      return resolve(out)
+    if (!detailedError)
+      return reject(new Error(String(err || error.message).trim().split('\n').pop()))
+    const reason = error.killed ? 'превышено время ожидания' : `код ${error.code ?? error.signal}`
+    const logs = [out, err].map(part => stripVTControlCharacters(part).trim().split('\n').slice(-6).join('\n').slice(-600)).filter(Boolean)
+    reject(new Error([reason, ...logs].join('\n')))
+  }))
+}
 // базовая ветка репозитория в копии бота: клонировать при надобности, освежить, вернуть ref, sha и чтение из git
 const fetchedAt = new Map()
 async function baseRef(repo, fresh, wantRef, { strict = false } = {}) {
@@ -1094,9 +1112,48 @@ function writeRepoConfig(repo, patch) {
     rc.docReviewSince ||= Math.ceil(Date.now() / 1000) * 1000
   if (patch.docReview === false)
     delete rc.docReviewSince
+  if (Object.hasOwn(patch, 'dependencyUpdates'))
+    rc.dependencyUpdates = dependencySettings(patch.dependencyUpdates, rc.dependencyUpdates)
   c.repos = { ...(c.repos || {}), [repo]: rc }
   fs.writeFileSync(CONFIG, JSON.stringify(c, null, 2))
   return rc
+}
+
+function dependencyRepoConfig(repo) {
+  return readConfig().repos?.[repo] || {}
+}
+
+const dependencies = createDependencySchedule({
+  stateFile: path.join(DATA, 'dependency-updates.json'),
+  settings: dependencyRepoConfig,
+  update(repo, config, branch) {
+    const command = (cmd, args, cwd) => sh(cmd, args, {
+      cwd,
+      timeout: 600000,
+      detailedError: true,
+      env: cmd === 'git' || cmd === 'gh'
+        ? { ...ENV, BOT_REPO: repo, GIT_TERMINAL_PROMPT: '0' }
+        : process.env,
+    })
+    return updateDependencies(repo, config, branch, {
+      command,
+      botName: BOT_ENV.BOT_NAME || 'bot',
+      botEmail: BOT_ENV.BOT_EMAIL || 'bot@users.noreply.github.com',
+      canPublish() {
+        const latest = dependencyRepoConfig(repo)
+        return latest.base === config.base && latest.checks === config.checks
+          && JSON.stringify(latest.dependencyUpdates) === JSON.stringify(config.dependencyUpdates)
+      },
+    })
+  },
+  recover: (repo, branch) => recoverDependencyPull(repo, branch, sh),
+})
+
+function scanDependencies() {
+  for (const [repo, config] of Object.entries(readConfig().repos || {})) {
+    if (isRepo(repo) && config.dependencyUpdates)
+      void dependencies.tick(repo)
+  }
 }
 
 // ---------- проверка документации после слияния ----------
@@ -1782,7 +1839,15 @@ const server = http.createServer(async (req, res) => {
   if (p === '/api/repo-settings' && req.method === 'POST') {
     const b = (await body(req)) ?? {}
     const repo = repoOf(b.repo)
-    const rc = writeRepoConfig(repo, b)
+    let rc
+    try {
+      if (Object.hasOwn(b, 'dependencyUpdates') && !isRepo(repo))
+        return json(res, { error: 'Укажите репозиторий' }, 400)
+      rc = writeRepoConfig(repo, b)
+    }
+    catch (error) {
+      return json(res, { error: error.message }, 400)
+    }
     if (b.auto)
       setTimeout(() => autoTick(true), 1000)
     if (typeof b.docReview === 'boolean' || typeof b.base === 'string') {
@@ -1796,6 +1861,16 @@ const server = http.createServer(async (req, res) => {
         await new Promise(resolve => setTimeout(resolve, activationDelay))
     }
     return json(res, { settings: rc })
+  }
+  if (p === '/api/dependency-updates' && req.method === 'GET') {
+    const repo = url.searchParams.get('repo')
+    if (!isRepo(repo))
+      return json(res, { error: 'Укажите репозиторий' }, 400)
+    return json(res, {
+      settings: dependencyRepoConfig(repo).dependencyUpdates,
+      timezone: new Intl.DateTimeFormat().resolvedOptions().timeZone,
+      ...dependencies.status(repo),
+    })
   }
   if (p === '/api/doc-review' && req.method === 'GET') {
     const repo = url.searchParams.get('repo')
@@ -2207,7 +2282,9 @@ repoList() // список репозиториев — заранее, чтоб
 server.listen(PORT, '127.0.0.1', () => {
   process.stdout.write(`bot ui: http://127.0.0.1:${PORT}\n`)
   scanDocumentation()
+  scanDependencies()
   setInterval(scanDocumentation, 60000)
+  setInterval(scanDependencies, 60000)
   next()
 })
 process.on('SIGTERM', () => {
