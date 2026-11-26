@@ -8,6 +8,7 @@ import SetDependencyUpdates from './SetDependencyUpdates.vue'
 
 const s = reactive<Record<string, any>>({
   ai: '',
+  dialogCompanion: false,
   ticketModel: '',
   codexModel: '',
   base: '',
@@ -38,7 +39,7 @@ const docReviewSaving = ref(false)
 
 async function load() {
   const r = await api(`/api/repo-settings?repo=${encodeURIComponent(store.curRepo)}`)
-  Object.assign(s, { map: true, impact: true, fsd: true, screens: true }, r.settings, {
+  Object.assign(s, { map: true, impact: true, fsd: true, screens: true, dialogCompanion: false }, r.settings, {
     auto: {
       ...s.auto,
       ...(r.settings.auto || {}),
@@ -157,6 +158,20 @@ const AUTO = [
             Codex
           </button>
         </div>
+      </div>
+      <div class="set">
+        <label
+          class="lbl"
+          for="dialog-companion"
+        >
+          Мини-агент<small>Claude Haiku получает текст диалога и иногда добавляет реплику. Требуется Claude Code.</small>
+        </label>
+        <input
+          id="dialog-companion"
+          type="checkbox"
+          :checked="s.dialogCompanion"
+          @change="save({ dialogCompanion: ($event.target as HTMLInputElement).checked })"
+        >
       </div>
       <div
         v-if="repoAi === 'claude'"
