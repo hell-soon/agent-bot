@@ -24,7 +24,8 @@ const emit = defineEmits<{
 
 // перетаскивание по смещению указателя: рамка, её размер, блок, его размер
 const live = reactive({ key: '', x: 0, y: 0, w: 0, h: 0 })
-let stop = () => {}
+function idle() {}
+let stop = idle // снимает слежку за указателем текущего перетаскивания
 onBeforeUnmount(() => stop())
 function track(e: PointerEvent, key: string, start: { x: number, y: number, w: number, h: number }, apply: (dx: number, dy: number) => Partial<typeof live>, done: () => Promise<unknown>) {
   if (e.button !== 0 || props.readonly || props.proposal?.isNew)
@@ -47,6 +48,8 @@ function track(e: PointerEvent, key: string, start: { x: number, y: number, w: n
     stop()
     if (moved && ev.type !== 'pointercancel')
       await done() // до ответа сервера рамка остаётся там, куда её отпустили
+    if (live.key !== key || stop !== idle)
+      return // за это время начали новое перетаскивание — его состояние не трогаем
     live.key = ''
     emit('moving', null)
   }
@@ -57,7 +60,7 @@ function track(e: PointerEvent, key: string, start: { x: number, y: number, w: n
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', up)
     window.removeEventListener('pointercancel', up)
-    stop = () => {}
+    stop = idle
   }
 }
 
@@ -82,15 +85,18 @@ function box(s: Shape) {
       }
     : s
 }
-const clamp = (v: number, lo: number) => Math.max(lo, Math.round(v))
+const GRAB = 16 // как в featureSketch.mjs: у блока внутри рамки всегда видно хотя бы столько
+const within = (v: number, lo: number, hi = Infinity) => Math.min(Math.max(lo, hi), Math.max(lo, Math.round(v)))
+const fitW = () => Math.max(120, ...sk.value.shapes.map(x => x.x + GRAB))
+const fitH = () => Math.max(120, ...sk.value.shapes.map(x => x.y + GRAB))
 
 function moveFrame(e: PointerEvent) {
   if ((e.target as HTMLElement).closest('button, input, select'))
     return
   const s = sk.value
   track(e, 'frame', s, (dx, dy) => ({
-    x: clamp(s.x + dx, 0),
-    y: clamp(s.y + dy, props.head),
+    x: within(s.x + dx, 0),
+    y: within(s.y + dy, props.head),
   }), () => props.act({
     op: 'sketch',
     id: s.id,
@@ -101,8 +107,8 @@ function moveFrame(e: PointerEvent) {
 function sizeFrame(e: PointerEvent) {
   const s = sk.value
   track(e, 'size', s, (dx, dy) => ({
-    w: clamp(s.w + dx, 120),
-    h: clamp(s.h + dy, 120),
+    w: within(s.w + dx, fitW(), 1600),
+    h: within(s.h + dy, fitH(), 1600),
   }), () => props.act({
     op: 'sketch',
     id: s.id,
@@ -117,8 +123,8 @@ function moveShape(e: PointerEvent, s: Shape) {
     return
   selected.value = s.id
   track(e, `s:${s.id}`, s, (dx, dy) => ({
-    x: clamp(s.x + dx, 0),
-    y: clamp(s.y + dy, 0),
+    x: within(s.x + dx, 0, sk.value.w - GRAB),
+    y: within(s.y + dy, 0, sk.value.h - GRAB),
   }), () => props.act({
     op: 'shape',
     sketch: sk.value.id,
@@ -129,8 +135,8 @@ function moveShape(e: PointerEvent, s: Shape) {
 }
 function sizeShape(e: PointerEvent, s: Shape) {
   track(e, `s:${s.id}`, s, (dx, dy) => ({
-    w: clamp(s.w + dx, 8),
-    h: clamp(s.h + dy, 8),
+    w: within(s.w + dx, 8),
+    h: within(s.h + dy, 8),
   }), () => props.act({
     op: 'shape',
     sketch: sk.value.id,
@@ -181,8 +187,6 @@ function addShape(type: Shape['type']) {
     op: 'addShape',
     sketch: sk.value.id,
     type,
-    x: 16,
-    y: 16,
   })
 }
 function removeSketch() {
@@ -334,18 +338,6 @@ const line = (m: Mark) => m.pts.map((p, i) => `${i ? 'L' : 'M'}${p[0]} ${p[1]}`)
         </div>
       </div>
 
-      <svg
-        class="ink"
-        :width="frame.w"
-        :height="frame.h"
-      >
-        <path
-          v-for="m in marks"
-          :key="m.id"
-          :d="line(m)"
-        />
-      </svg>
-
       <span
         v-if="!readonly && !proposal?.isNew"
         class="grip frame-grip"
@@ -353,6 +345,20 @@ const line = (m: Mark) => m.pts.map((p, i) => `${i ? 'L' : 'M'}${p[0]} ${p[1]}`)
         @pointerdown="sizeFrame"
       />
     </div>
+
+    <!-- пометки — вне тела рамки: тело обрезает блоки по краю, а обводка может выходить за него -->
+    <svg
+      class="ink"
+      :style="{ top: `${head}px` }"
+      :width="frame.w"
+      :height="frame.h"
+    >
+      <path
+        v-for="m in marks"
+        :key="m.id"
+        :d="line(m)"
+      />
+    </svg>
 
     <div
       v-if="proposal && !readonly"
@@ -380,7 +386,8 @@ const line = (m: Mark) => m.pts.map((p, i) => `${i ? 'L' : 'M'}${p[0]} ${p[1]}`)
 .sketch {
   position: absolute;
   z-index: 1;
-  border: 1px solid var(--line);
+  // outline, а не border: тело рамки начинается ровно в (x, y) доски — пометки и блоки не съезжают на толщину линии
+  outline: 1px solid var(--line);
   border-radius: 10px;
   background: var(--card);
   box-shadow: var(--shadow);
@@ -393,11 +400,11 @@ const line = (m: Mark) => m.pts.map((p, i) => `${i ? 'L' : 'M'}${p[0]} ${p[1]}`)
     animation: none;
   }
   &.ghost {
-    border: 1.5px dashed var(--accent);
+    outline: 1.5px dashed var(--accent);
     background: var(--accent-soft);
   }
   &.chg {
-    border-color: var(--accent);
+    outline-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-soft);
   }
 }
@@ -539,9 +546,10 @@ const line = (m: Mark) => m.pts.map((p, i) => `${i ? 'L' : 'M'}${p[0]} ${p[1]}`)
 }
 .ink {
   position: absolute;
-  inset: 0;
+  left: 0;
+  overflow: visible;
   pointer-events: none;
-  z-index: 1;
+  z-index: 2;
   path {
     fill: none;
     stroke: var(--bad);

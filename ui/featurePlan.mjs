@@ -2,7 +2,7 @@
 // Чистые функции без ввода-вывода: сервер хранит доску в run.board, бот присылает план блоком ```plan {json}```.
 // Первый план бота ложится на пустую доску сразу, следующие — предложениями (принять / отклонить).
 
-import { acceptSketch, describeMarks, describeSketches, mergeSketches, parseSketches, SKETCH_HEAD, sketchesForBot, sketchOp } from './featureSketch.mjs'
+import { acceptSketch, describeMarks, describeSketches, mergeSketches, parseSketches, sketchesForBot, sketchNear, sketchOp } from './featureSketch.mjs'
 
 const COL = 270 // шаг сетки раскладки по горизонтали (ширина карточки 220 + зазор)
 const ROW = 150 // и по вертикали
@@ -158,6 +158,14 @@ function nextId(b, prefix) {
   return id
 }
 
+// эскизы плана с привязкой к шагам после переименования id
+function planSketches(plan, idOf) {
+  return (plan.sketches || []).map(k => ({
+    ...k,
+    step: idOf(k.step),
+  }))
+}
+
 // План бота → доска. Первый план ложится сразу; следующие — предложения (прежние неразобранные заменяются новыми)
 export function mergeBotPlan(board, plan) {
   const b = clone(board || emptyBoard())
@@ -189,10 +197,7 @@ export function mergeBotPlan(board, plan) {
       by: 'bot',
     })))
     b.links.push(...links)
-    mergeSketches(b, (plan.sketches || []).map(k => ({
-      ...k,
-      step: idOf(k.step),
-    })), true)
+    mergeSketches(b, planSketches(plan, idOf), true)
     return b
   }
   b.suggestions = []
@@ -263,10 +268,7 @@ export function mergeBotPlan(board, plan) {
       sug({ kind: 'unlink', from: l.from, to: l.to })
   }
   // эскизы, которых нет в новом плане, не удаляются: бот мог их просто не повторить
-  mergeSketches(b, (plan.sketches || []).map(k => ({
-    ...k,
-    step: idOf(k.step),
-  })), false, sug)
+  mergeSketches(b, planSketches(plan, idOf), false, sug)
   return b
 }
 
@@ -314,8 +316,12 @@ function accept(b, s) {
     return ''
   }
   if (s.kind === 'remove') { removeItem(b, s.target); return '' }
-  if (s.kind === 'sketch')
-    return acceptSketch(b, s)
+  if (s.kind === 'sketch') {
+    // эскиз к ещё не принятому новому шагу — принимаем и шаг, чтобы привязка не потерялась
+    const add = pending(b, s.sketch.step)
+    const err = add && accept(b, add)
+    return err || acceptSketch(b, s)
+  }
   if (s.kind === 'unlink') { b.links = b.links.filter(l => !(l.from === s.from && l.to === s.to)); return '' }
   // link: если конец стрелки — ещё не принятый новый шаг, принимаем и его
   for (const id of [s.from, s.to]) {
@@ -492,9 +498,8 @@ export function approvedPlanText(board, task) {
     return head + body
   })
   // заметка, положенная рядом с эскизом, — про него
-  const nearSketch = nt => (board.sketches || []).find(sk => nt.x < sk.x + sk.w + 60 && nt.x + 220 > sk.x - 60 && nt.y < sk.y + sk.h + 60 && nt.y + 90 > sk.y - SKETCH_HEAD - 60)
   const notes = board.items.filter(i => i.type === 'note' && (i.title || i.text)).map((nt) => {
-    const sk = nearSketch(nt)
+    const sk = sketchNear(board, nt)
     return `- ${[nt.title, nt.text].filter(Boolean).join(': ')}${sk
       ? ` (у эскиза «${sk.title || sk.id}»)`
       : ''}`

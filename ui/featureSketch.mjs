@@ -21,7 +21,7 @@ function num(v, lo, hi, def) {
 }
 
 // Блок эскиза: тип, рамка и подпись
-export function normShape(raw, id) {
+function normShape(raw, id) {
   const type = SHAPES.includes(raw?.type)
     ? raw.type
     : 'rect'
@@ -38,12 +38,20 @@ export function normShape(raw, id) {
       : type === 'text'
         ? 20
         : 60),
-    label: clip(raw?.label ?? raw?.text, 200),
+    label: clip(raw?.label, 200),
   }
 }
 
+// Блок не уходит за рамку эскиза: левый верхний угол и хотя бы GRAB пикселей видны, чтобы за него можно было взяться
+const GRAB = 16
+function inside(sk, s) {
+  s.x = Math.min(s.x, Math.max(0, sk.w - GRAB))
+  s.y = Math.min(s.y, Math.max(0, sk.h - GRAB))
+  return s
+}
+
 // Эскиз от бота или из запроса: блоки с уникальными id, размер рамки — заданный или по блокам
-export function normSketch(raw, steps = null) {
+function normSketch(raw, steps = null) {
   const shapes = []
   const ids = new Set()
   let n = 0
@@ -60,14 +68,17 @@ export function normSketch(raw, steps = null) {
   const fitW = Math.max(200, ...shapes.map(s => s.x + s.w + 12))
   const fitH = Math.max(160, ...shapes.map(s => s.y + s.h + 12))
   const step = clip(raw?.step, 40)
+  const frame = {
+    w: num(raw?.w, 120, 1600, Math.min(1600, fitW)),
+    h: num(raw?.h, 120, 1600, Math.min(1600, fitH)),
+  }
   return {
     title: clip(raw?.title, 120),
     step: !steps || steps.has(step)
       ? step
       : '',
-    w: num(raw?.w, 120, 1600, Math.min(1600, fitW)),
-    h: num(raw?.h, 120, 1600, Math.min(1600, fitH)),
-    shapes,
+    ...frame,
+    shapes: shapes.map(s => inside(frame, s)),
   }
 }
 
@@ -93,7 +104,7 @@ export function parseSketches(list, steps, taken = []) {
 }
 
 // Содержимое эскиза для сравнения «бот что-то поменял?» — без позиции рамки на доске
-export function sketchSig(sk) {
+function sketchSig(sk) {
   return JSON.stringify([
     sk.title,
     sk.step,
@@ -116,9 +127,11 @@ export function normPoints(pts) {
   const out = []
   for (const p of (Array.isArray(pts)
     ? pts
-    : []).slice(0, MAX_POINTS * 4)) {
-    const x = num(p?.[0], -MAX, MAX, Number.NaN)
-    const y = num(p?.[1], -MAX, MAX, Number.NaN)
+    : []).slice(0, MAX_POINTS * 50)) { // предохранитель от огромного запроса; до MAX_POINTS прорежаем ниже
+    if (!Array.isArray(p) || typeof p[0] !== 'number' || typeof p[1] !== 'number')
+      continue
+    const x = num(p[0], -MAX, MAX, Number.NaN)
+    const y = num(p[1], -MAX, MAX, Number.NaN)
     if (Number.isNaN(x) || Number.isNaN(y))
       continue
     const last = out[out.length - 1]
@@ -228,9 +241,7 @@ export function describeSketches(board, stepTitle) {
       ? `, к шагу «${step}»`
       : ''})`)
     for (const s of sk.shapes) {
-      out.push(`- ${SHAPE_NAME[s.type]}${s.label
-        ? ` «${s.label}»`
-        : ''}: x ${s.x}, y ${s.y}, ${s.w}×${s.h}`)
+      out.push(`- ${shapeName(s)}: x ${s.x}, y ${s.y}, ${s.w}×${s.h}`)
     }
     if (!sk.shapes.length)
       out.push('- (пусто)')
@@ -238,12 +249,23 @@ export function describeSketches(board, stepTitle) {
   return out
 }
 
-// Новый эскиз на свободном месте: правее всего, что есть на доске
-export function sketchSpot(board, w) {
+// Эскиз, рядом с которым (в пределах 60px) лежит карточка, — заметка у эскиза про него
+export function sketchNear(board, item) {
+  const gap = 60
+  return (board.sketches || []).find(sk => item.x < sk.x + sk.w + gap && item.x + CARD_W > sk.x - gap && item.y < sk.y + sk.h + gap && item.y + CARD_H > sk.y - SKETCH_HEAD - gap)
+}
+
+const stepIds = b => new Set(b.items.filter(i => i.type === 'step').map(i => i.id))
+
+// Новый эскиз на свободном месте: правее карточек и эскизов (в т.ч. ещё не принятых — extra)
+function sketchSpot(board, w, extra = []) {
   const right = Math.max(
     0,
     ...board.items.map(i => i.x + CARD_W),
-    ...(board.sketches || []).map(s => s.x + s.w),
+    ...[
+      ...(board.sketches || []),
+      ...extra,
+    ].map(s => s.x + s.w),
   )
   return {
     x: Math.min(MAX - w, right + 50),
@@ -268,7 +290,7 @@ export function sketchOp(b, op) {
     case 'addSketch': {
       if (b.sketches.length >= MAX_SKETCHES)
         return { error: 'На доске уже слишком много эскизов' }
-      const steps = new Set(b.items.filter(i => i.type === 'step').map(i => i.id))
+      const steps = stepIds(b)
       const n = normSketch({
         title: op.title || 'Эскиз',
         step: op.step,
@@ -302,10 +324,11 @@ export function sketchOp(b, op) {
         s.x = num(op.x, 0, MAX, s.x)
       if (op.y !== undefined)
         s.y = num(op.y, SKETCH_HEAD, MAX, s.y)
+      // рамку нельзя сжать так, чтобы блок целиком ушёл за край
       if (op.w !== undefined)
-        s.w = num(op.w, 120, 1600, s.w)
+        s.w = num(op.w, Math.max(120, ...s.shapes.map(x => x.x + GRAB)), 1600, s.w)
       if (op.h !== undefined)
-        s.h = num(op.h, 120, 1600, s.h)
+        s.h = num(op.h, Math.max(120, ...s.shapes.map(x => x.y + GRAB)), 1600, s.h)
       if (op.title !== undefined)
         s.title = clip(op.title, 120)
       if (op.step !== undefined) {
@@ -338,27 +361,28 @@ export function sketchOp(b, op) {
         : type === 'text'
           ? 'Текст'
           : '')
-      s.shapes.push(normShape({
+      const shift = 16 + 14 * (s.shapes.length % 8) // новые блоки лесенкой, а не друг на друге
+      s.shapes.push(inside(s, normShape({
         ...op,
         type,
         label,
-        x: op.x ?? 16,
-        y: op.y ?? 16,
-      }, id))
+        x: op.x ?? shift,
+        y: op.y ?? shift,
+      }, id)))
       return { id }
     }
     case 'shape': {
       const it = sk(op.sketch)?.shapes.find(x => x.id === op.id)
       if (!it)
         return { error: 'Нет такого блока' }
-      Object.assign(it, normShape({
+      Object.assign(it, inside(sk(op.sketch), normShape({
         type: it.type,
         x: op.x ?? it.x,
         y: op.y ?? it.y,
         w: op.w ?? it.w,
         h: op.h ?? it.h,
         label: op.label ?? it.label,
-      }, it.id))
+      }, it.id)))
       return {}
     }
     case 'removeShape': {
@@ -407,14 +431,9 @@ export function mergeSketches(b, list, first, sug) {
       continue
     }
     if (!cur) {
-      const taken = b.suggestions.filter(s => s.kind === 'sketch' && !s.target).map(s => s.sketch)
-      const spot = sketchSpot({
-        items: b.items,
-        sketches: [
-          ...b.sketches,
-          ...taken,
-        ],
-      }, raw.w)
+      // правее и предложенных, но ещё не принятых эскизов и карточек
+      const pending = b.suggestions.filter(s => s.kind === 'add' || (s.kind === 'sketch' && !s.target)).map(s => s.sketch || { x: s.item.x, w: CARD_W })
+      const spot = sketchSpot(b, raw.w, pending)
       sug({
         kind: 'sketch',
         sketch: {
@@ -435,8 +454,7 @@ export function acceptSketch(b, s) {
   const cur = s.target && b.sketches.find(x => x.id === s.target)
   if (s.target && !cur)
     return 'Эскиз уже удалён'
-  const steps = new Set(b.items.filter(i => i.type === 'step').map(i => i.id))
-  const step = steps.has(s.sketch.step)
+  const step = stepIds(b).has(s.sketch.step)
     ? s.sketch.step
     : ''
   if (cur) {

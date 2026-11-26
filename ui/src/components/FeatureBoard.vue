@@ -382,6 +382,7 @@ const SUG_TEXT: Record<string, string> = {
   remove: 'Бот предлагает удалить',
   link: 'Новая зависимость',
   unlink: 'Убрать зависимость',
+  sketch: 'Бот предлагает эскиз',
 }
 </script>
 

@@ -344,7 +344,7 @@ it('бот получает эскиз и пометки — в сообщени
   const t = approvedPlanText(b, 'Сделай мобильное меню')
   assert.match(t, /## Эскизы интерфейса/)
   assert.match(t, /### Мобильное меню \(240×420, к шагу «Меню»\)/)
-  assert.match(t, /- кнопка «Меню»: x 12, y 360, 48×32/)
+  assert.match(t, /- кнопка «Меню» \(burger\): x 12, y 360, 48×32/)
   assert.match(t, /## Пометки человека от руки\n- на эскизе «Мобильное меню» обведено: кнопка «Меню» \(burger\)/)
   assert.match(t, /- Кнопку — вниз, под большой палец \(у эскиза «Мобильное меню»\)/)
 })
@@ -363,4 +363,73 @@ it('пометка на доске описывает карточку шага'
     ],
   }))
   assert.deepEqual(describeMarks(b), ['- на доске обведено: шаг «API» (s1)'])
+})
+
+it('блок не уходит за рамку, а рамку нельзя сжать до потери блока', () => {
+  let b = first()
+  b = ok(applyOp(b, {
+    op: 'shape',
+    sketch: 'k1',
+    id: 'burger',
+    x: 5000,
+    y: 5000,
+  }))
+  const s = b.sketches[0].shapes.find(x => x.id === 'burger')
+  assert.deepEqual([s.x, s.y], [240 - 16, 420 - 16])
+  b = ok(applyOp(b, { op: 'sketch', id: 'k1', w: 10, h: 10 }))
+  assert.ok(b.sketches[0].w >= s.x + 16 && b.sketches[0].h >= s.y + 16)
+  const p = parsePlan(planText({
+    ...PLAN,
+    sketches: [
+      {
+        id: 'k9',
+        w: 200,
+        h: 200,
+        shapes: [
+          { type: 'button', x: 900, y: 900 },
+        ],
+      },
+    ],
+  }))
+  assert.deepEqual([p.sketches[0].shapes[0].x, p.sketches[0].shapes[0].y], [184, 184])
+  assert.deepEqual(normPoints([
+    [0, 0],
+    [null, 5],
+    [3, 3],
+  ]), [
+    [0, 0],
+    [3, 3],
+  ], 'null — не 0')
+})
+
+it('эскиз к новому шагу: принять эскиз — принять и шаг, привязка сохраняется', () => {
+  let b = first()
+  const plan = {
+    items: [
+      ...PLAN.items,
+      {
+        id: 's3',
+        type: 'step',
+        title: 'Профиль',
+        text: 'Экран профиля',
+      },
+    ],
+    links: PLAN.links,
+    sketches: [
+      MENU,
+      {
+        id: 'k2',
+        step: 's3',
+        title: 'Профиль',
+        shapes: [
+          { type: 'text', label: 'Имя' },
+        ],
+      },
+    ],
+  }
+  b = mergeBotPlan(b, parsePlan(planText(plan)))
+  const sug = b.suggestions.find(s => s.kind === 'sketch')
+  b = ok(applyOp(b, { op: 'accept', id: sug.id }))
+  assert.ok(b.items.some(i => i.id === 's3'), 'шаг принят вместе с эскизом')
+  assert.equal(b.sketches.find(s => s.id === 'k2').step, 's3')
 })
