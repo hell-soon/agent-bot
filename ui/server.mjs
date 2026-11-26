@@ -6,6 +6,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
+import { FORMAT as ARCH_FORMAT, scan as archScan } from './arch-scan.mjs'
 import * as skills from './skills.mjs'
 
 const PORT = 4545
@@ -72,6 +73,42 @@ function collectOut(run, since) {
   appendEvent(run, { type: 'bot_files', from: 'bot', files: fresh.map(f => ({ ...fileInfo(f), name: path.basename(f) })), at: Date.now() })
   return fresh
 }
+// ---------- схема архитектуры: чтение из git базовой ветки (рабочая копия бота может быть на чужой ветке) ----------
+const archCache = new Map() // repo → { sha, data }
+const sh = (cmd, args, opts = {}) => new Promise((resolve, reject) => execFile(cmd, args, { env: ENV, maxBuffer: 64 * 1024 * 1024, timeout: 60000, ...opts }, (e, out, err) => (e ? reject(new Error(String(err || e.message).trim().split('\n').pop())) : resolve(out))))
+async function archData(repo, fresh) {
+  const W = path.join(BOT, 'work', repo.replace('/', '__'))
+  if (!fs.existsSync(path.join(W, '.git')))
+    await sh(AGENT, ['_status'], { env: { ...ENV, BOT_REPO: repo } }) // клонирует и настроит доступ
+  if (fresh || !archCache.has(repo))
+    await sh('git', ['-C', W, 'fetch', '-q', 'origin']).catch(() => {})
+  const ref = (await sh('git', ['-C', W, 'rev-parse', '--abbrev-ref', 'origin/HEAD']).catch(() => 'origin/main')).trim()
+  const sha = (await sh('git', ['-C', W, 'rev-parse', ref])).trim()
+  const hit = archCache.get(repo)
+  if (hit && hit.sha === sha && !fresh)
+    return hit.data
+  const list = (await sh('git', ['-C', W, 'ls-tree', '-r', '--name-only', ref])).split('\n').filter(Boolean)
+  const read = (f) => {
+    try { return execFileSync('git', ['-C', W, 'show', `${ref}:${f}`], { env: ENV, maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }).toString() }
+    catch { return null }
+  }
+  const grep = await sh('git', ['-C', W, 'grep', '-I', '-o', '-E', '(https?|wss?)://[A-Za-z0-9.-]+\\.[A-Za-z]{2,}', ref, '--']).catch(() => '')
+  const urls = grep.split('\n').filter(Boolean).map((l) => {
+    const rest = l.slice(ref.length + 1); const i = rest.indexOf(':')
+    return { file: rest.slice(0, i), url: rest.slice(i + 1) }
+  })
+  const scanned = archScan({ list: () => list, read, urls: () => urls }, repo)
+  let saved = null
+  const raw = read('docs/architecture.json')
+  if (raw) {
+    try { saved = JSON.parse(raw) }
+    catch { saved = { error: 'docs/architecture.json — не JSON' } }
+  }
+  const data = { repo, ref, sha: sha.slice(0, 7), saved, scan: scanned }
+  archCache.set(repo, { sha, data })
+  return data
+}
+
 // какие файлы задача правила: из её журнала (Edit/Write), пути — относительно копии репозитория
 const editCache = new Map() // id → { mtime, files }
 function editedFiles(run) {
@@ -1589,6 +1626,34 @@ const server = http.createServer(async (req, res) => {
       at: r.endedAt || r.startedAt || r.createdAt,
       files: editedFiles(r),
     })).filter(r => r.files.length) })
+  }
+  if (p === '/api/arch') { // схема архитектуры: docs/architecture.json из базовой ветки + каркас сканера
+    try { return json(res, await archData(repoOf(url.searchParams.get('repo')), url.searchParams.has('fresh'))) }
+    catch (e) { return json(res, { error: e.message }, 500) }
+  }
+  if (req.method === 'POST' && p === '/api/arch/ai') { // задача боту: проверить каркас по коду и принести PR со схемой
+    const b = await body(req)
+    const repo = repoOf(b.repo)
+    const d = await archData(repo, true)
+    const file = path.join(UPLOADS, 'arch', `${repo.replace('/', '__')}-scan.json`)
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, JSON.stringify(d.scan, null, 2))
+    const cfgNow = readConfig()
+    const ai = AIS[b.ai] ? b.ai : AIS[cfgNow.repos?.[repo]?.ai] ? cfgNow.repos[repo].ai : cfgNow.ai
+    const run = newRun({
+      kind: 'task',
+      repo,
+      ai,
+      files: [file],
+      title: d.saved ? 'Схема архитектуры: обновить' : 'Схема архитектуры: создать',
+      text: `${d.saved ? 'Обнови' : 'Создай'} схему архитектуры проекта — файл docs/architecture.json (формат ниже; её рисует панель бота).
+Во вложении — каркас от сканера без ИИ (по docker-compose, зависимостям, .env.example и адресам API в коде). Возьми его за основу и проверь по коду и конфигам: убери лишнее, добавь недостающие сервисы, хранилища, очереди, внешние системы и связи — кто кого вызывает (http), кто куда пишет и откуда читает (data), какие события шлёт (event), куда уходят логи и метрики (metrics). У каждого узла — короткая подпись sub: язык · фреймворк · порт или назначение. Добавь 3–6 полезных видов (views), например «Вход и авторизация», «Вызовы между сервисами», «События», «Данные и хранилища».${d.saved ? ' Файл уже есть: обнови его, узлы с "manual": true не трогай.' : ''}
+Меняй только docs/architecture.json (и, если уместно, одну строку-ссылку на него в README или AGENTS.md); код не трогай. Проверь, что это валидный JSON и все from/to есть среди nodes. Затем ветка, коммит, PR.
+
+${ARCH_FORMAT}`,
+    })
+    pushState(); next()
+    return json(res, { ids: [run.id] })
   }
   if (p === '/api/installations') { // установки GitHub App: чьи можно использовать (BOT_OWNERS), чужие — удалить
     const run = args => new Promise(resolve => execFile(path.join(BOT, 'token.sh'), args, { env: ENV, timeout: 30000 }, (err, out, e) => resolve({ err: err && (String(e).trim() || err.message), out })))

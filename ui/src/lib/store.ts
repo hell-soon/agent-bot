@@ -75,6 +75,7 @@ export const store = reactive({
   repoDirty: '',
   selected: null as string | null,
   graph: false, // экран «Граф проекта» (#graph)
+  arch: false, // экран «Архитектура» (#arch)
   // строка ввода
   compose: {
     mode: (savedMode && MODES[savedMode]
@@ -126,6 +127,7 @@ function readHash() {
     ? h
     : null
   store.graph = h === 'graph'
+  store.arch = h === 'arch'
 }
 window.addEventListener('popstate', readHash)
 export function select(id: string) {
@@ -134,16 +136,26 @@ export function select(id: string) {
     setRepo(r.repo)
   store.selected = id
   store.graph = false
+  store.arch = false
   store.sbOpen = false
   history.pushState(null, '', `#${id}`)
 }
 export function goHome() {
   store.selected = null
   store.graph = false
+  store.arch = false
   history.pushState(null, '', '#')
+}
+export function openArch() {
+  store.selected = null
+  store.graph = false
+  store.arch = true
+  store.sbOpen = false
+  history.pushState(null, '', '#arch')
 }
 export function openGraph() {
   store.selected = null
+  store.arch = false
   store.graph = true
   store.sbOpen = false
   history.pushState(null, '', '#graph')
