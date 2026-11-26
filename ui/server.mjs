@@ -13,7 +13,7 @@ import { codeGraph } from './code-graph.mjs'
 import { createDependencySchedule, dependencySettings } from './dependencySchedule.mjs'
 import { recoverDependencyPull, updateDependencies } from './dependencyUpdates.mjs'
 import { createDocReview } from './docReview.mjs'
-import { applyOp as boardOp, approvedPlanText, boardForBot, mergeBotPlan, parsePlan } from './featurePlan.mjs'
+import { approvedPlanText, boardForBot, applyOp as boardOp, mergeBotPlan, parsePlan } from './featurePlan.mjs'
 import { parseQuestion, pauseBoard, resumeText } from './featureQuestion.mjs'
 import { impactMarkdown, mapMarkdown, sliceOf } from './project-map.mjs'
 import { pickRoutes, shoot, VIEWPORTS } from './screens.mjs'
@@ -44,15 +44,34 @@ function hasCmd(c) {
   try { execFileSync('/bin/sh', ['-c', `command -v ${c}`], { env: ENV, stdio: 'ignore' }); return true }
   catch { return false }
 }
-const AIS = { claude: hasCmd('claude'), codex: hasCmd('codex') }
-const fallbackAi = () => (AIS.claude || !AIS.codex ? 'claude' : 'codex')
+const AIS = {
+  claude: hasCmd('claude'),
+  codex: hasCmd('codex'),
+}
+function fallbackAi() {
+  return AIS.claude || !AIS.codex
+    ? 'claude'
+    : 'codex'
+}
 fs.mkdirSync(DATA, { recursive: true })
 // Вложения из панели (картинки, файлы): uploads/<дата>/<метка>-<имя>; ИИ получает пути
 const UPLOADS = path.join(BOT, 'uploads')
 const IMG = /\.(?:png|jpe?g|gif|webp)$/i
-const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' }
+const MIME = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+}
 const isUpload = p => typeof p === 'string' && path.resolve(p).startsWith(UPLOADS + path.sep) && fs.existsSync(p)
-const fileInfo = p => ({ path: p, name: path.basename(p).replace(/^[a-z0-9]{8}-/, ''), image: IMG.test(p) })
+function fileInfo(p) {
+  return {
+    path: p,
+    name: path.basename(p).replace(/^[a-z0-9]{8}-/, ''),
+    image: IMG.test(p),
+  }
+}
 // Исходящие файлы бота: uploads/out/<id задачи>; плюс картинки, которые Codex сгенерировал за время хода
 const outboxOf = run => path.join(UPLOADS, 'out', run.id)
 const CODEX_IMAGES = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'generated_images')
@@ -60,7 +79,11 @@ function listFiles(dir) {
   try {
     return fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory()
       ? listFiles(path.join(dir, e.name))
-      : e.isFile() && !e.name.startsWith('.') ? [path.join(dir, e.name)] : [])
+      : e.isFile() && !e.name.startsWith('.')
+        ? [
+            path.join(dir, e.name),
+          ]
+        : [])
   }
   catch { return [] }
 }
@@ -72,7 +95,10 @@ function collectOut(run, since) {
         if (IMG.test(f) && fs.statSync(f).mtimeMs >= since && !(run.codexImgs || []).includes(f)) {
           fs.mkdirSync(box, { recursive: true })
           fs.copyFileSync(f, path.join(box, `gen-${path.basename(f)}`))
-          run.codexImgs = [...(run.codexImgs || []), f]
+          run.codexImgs = [
+            ...(run.codexImgs || []),
+            f,
+          ]
         }
       }
       catch {}
@@ -81,8 +107,19 @@ function collectOut(run, since) {
   const fresh = listFiles(box).filter(f => !(run.outSeen || []).includes(f)).slice(0, 20)
   if (!fresh.length)
     return []
-  run.outSeen = [...(run.outSeen || []), ...fresh]
-  appendEvent(run, { type: 'bot_files', from: 'bot', files: fresh.map(f => ({ ...fileInfo(f), name: path.basename(f) })), at: Date.now() })
+  run.outSeen = [
+    ...(run.outSeen || []),
+    ...fresh,
+  ]
+  appendEvent(run, {
+    type: 'bot_files',
+    from: 'bot',
+    files: fresh.map(f => ({
+      ...fileInfo(f),
+      name: path.basename(f),
+    })),
+    at: Date.now(),
+  })
   return fresh
 }
 // ---------- схема архитектуры: чтение из git базовой ветки (рабочая копия бота может быть на чужой ветке) ----------
@@ -99,7 +136,9 @@ function sh(cmd, args, { detailedError = false, ...opts } = {}) {
       return resolve(out)
     if (!detailedError)
       return reject(new Error(String(err || error.message).trim().split('\n').pop()))
-    const reason = error.killed ? 'превышено время ожидания' : `код ${error.code ?? error.signal}`
+    const reason = error.killed
+      ? 'превышено время ожидания'
+      : `код ${error.code ?? error.signal}`
     const logs = [out, err].map(part => stripVTControlCharacters(part).trim().split('\n').slice(-6).join('\n').slice(-600)).filter(Boolean)
     reject(new Error([reason, ...logs].join('\n')))
   }))
@@ -108,8 +147,11 @@ function sh(cmd, args, { detailedError = false, ...opts } = {}) {
 const fetchedAt = new Map()
 async function baseRef(repo, fresh, wantRef, { strict = false } = {}) {
   const W = path.join(BOT, 'work', repo.replace('/', '__'))
-  if (!fs.existsSync(path.join(W, '.git')))
-    await sh(AGENT, ['_status'], { env: { ...ENV, BOT_REPO: repo } }) // клонирует и настроит доступ
+  if (!fs.existsSync(path.join(W, '.git'))) {
+    await sh(AGENT, ['_status'], {
+      env: { ...ENV, BOT_REPO: repo },
+    })
+  } // клонирует и настроит доступ
   if (fresh || Date.now() - (fetchedAt.get(repo) || 0) > 600000) {
     const fetch = sh('git', ['-C', W, 'fetch', '-q', 'origin'])
     if (strict)
@@ -118,17 +160,49 @@ async function baseRef(repo, fresh, wantRef, { strict = false } = {}) {
       await fetch.catch(() => {})
     fetchedAt.set(repo, Date.now())
   }
-  const ref = wantRef || (await sh('git', ['-C', W, 'rev-parse', '--abbrev-ref', 'origin/HEAD']).catch(() => 'origin/main')).trim()
+  const ref = wantRef || (await sh('git', [
+    '-C',
+    W,
+    'rev-parse',
+    '--abbrev-ref',
+    'origin/HEAD',
+  ]).catch(() => 'origin/main')).trim()
   const sha = (await sh('git', ['-C', W, 'rev-parse', ref])).trim()
   const read = (f) => {
-    try { return execFileSync('git', ['-C', W, 'show', `${ref}:${f}`], { env: ENV, maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }).toString() }
+    try {
+      return execFileSync('git', ['-C', W, 'show', `${ref}:${f}`], {
+        env: ENV,
+        maxBuffer: 8 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).toString()
+    }
     catch { return null }
   }
-  const list = async () => (await sh('git', ['-C', W, 'ls-tree', '-r', '--name-only', ref])).split('\n').filter(Boolean)
+  const list = async () => (await sh('git', [
+    '-C',
+    W,
+    'ls-tree',
+    '-r',
+    '--name-only',
+    ref,
+  ])).split('\n').filter(Boolean)
   // git grep -o по базовой ветке: строки «ref:файл:совпадение»
-  const grep = async re => (await sh('git', ['-C', W, 'grep', '-I', '-o', '-E', re, ref, '--']).catch(() => '')).split('\n').filter(Boolean).map((l) => {
+  const grep = async re => (await sh('git', [
+    '-C',
+    W,
+    'grep',
+    '-I',
+    '-o',
+    '-E',
+    re,
+    ref,
+    '--',
+  ]).catch(() => '')).split('\n').filter(Boolean).map((l) => {
     const rest = l.slice(ref.length + 1); const i = rest.indexOf(':')
-    return { file: rest.slice(0, i), text: rest.slice(i + 1) }
+    return {
+      file: rest.slice(0, i),
+      text: rest.slice(i + 1),
+    }
   })
   return { W, ref, sha, read, list, grep }
 }
@@ -137,22 +211,36 @@ const IMPORT_RE = String.raw`(from|import|require\(|import\()[[:space:]]*['"][^'
 async function codeData(repo, fresh) {
   const g = await baseRef(repo, fresh)
   const hit = codeCache.get(repo)
-  let graph = hit?.sha === g.sha ? hit.graph : null
+  let graph = hit?.sha === g.sha
+    ? hit.graph
+    : null
   if (!graph) {
     const files = await g.list()
     const lines = await g.grep(IMPORT_RE)
-    graph = codeGraph({ list: () => files, read: g.read, grep: () => lines })
+    graph = codeGraph({
+      list: () => files,
+      read: g.read,
+      grep: () => lines,
+    })
     codeCache.set(repo, { sha: g.sha, graph })
   }
   const bot = runs.filter(r => r.repo === repo).map(r => ({
     id: r.id,
     title: r.title,
     status: r.status,
-    ai: r.ai === 'codex' ? 'codex' : 'claude',
+    ai: r.ai === 'codex'
+      ? 'codex'
+      : 'claude',
     at: r.endedAt || r.startedAt || r.createdAt,
     files: editedFiles(r).map(f => f.path),
   })).filter(r => r.files.length)
-  return { repo, ref: g.ref, sha: g.sha.slice(0, 7), ...graph, bot }
+  return {
+    repo,
+    ref: g.ref,
+    sha: g.sha.slice(0, 7),
+    ...graph,
+    bot,
+  }
 }
 async function archData(repo, fresh) {
   const { ref, sha, read, list: ls, grep } = await baseRef(repo, fresh)
@@ -161,14 +249,24 @@ async function archData(repo, fresh) {
     return hit.data
   const list = await ls()
   const urls = (await grep(String.raw`(https?|wss?)://[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)).map(x => ({ file: x.file, url: x.text }))
-  const scanned = archScan({ list: () => list, read, urls: () => urls }, repo)
+  const scanned = archScan({
+    list: () => list,
+    read,
+    urls: () => urls,
+  }, repo)
   let saved = null
   const raw = read('docs/architecture.json')
   if (raw) {
     try { saved = JSON.parse(raw) }
     catch { saved = { error: 'docs/architecture.json — не JSON' } }
   }
-  const data = { repo, ref, sha: sha.slice(0, 7), saved, scan: scanned }
+  const data = {
+    repo,
+    ref,
+    sha: sha.slice(0, 7),
+    saved,
+    scan: scanned,
+  }
   archCache.set(repo, { sha, data })
   return data
 }
@@ -191,10 +289,19 @@ function editedFiles(run) {
     let ev; try { ev = JSON.parse(line) }
     catch { continue }
     for (const c of ev.message?.content || []) {
-      const fp = c.type === 'tool_use' && ['Edit', 'MultiEdit', 'Write', 'NotebookEdit'].includes(c.name) && (c.input?.file_path || c.input?.notebook_path)
+      const fp = c.type === 'tool_use' && [
+        'Edit',
+        'MultiEdit',
+        'Write',
+        'NotebookEdit',
+      ].includes(c.name) && (c.input?.file_path || c.input?.notebook_path)
       if (!fp)
         continue
-      const rel = root.test(fp) ? fp.replace(root, '') : !fp.startsWith('/') ? fp : null
+      const rel = root.test(fp)
+        ? fp.replace(root, '')
+        : !fp.startsWith('/')
+            ? fp
+            : null
       if (rel)
         count.set(rel, (count.get(rel) || 0) + 1)
     }
@@ -203,7 +310,11 @@ function editedFiles(run) {
   editCache.set(run.id, { mtime: st.mtimeMs, files })
   return files
 }
-const pickFiles = list => (Array.isArray(list) ? list : []).filter(isUpload).slice(0, 10)
+function pickFiles(list) {
+  return (Array.isArray(list)
+    ? list
+    : []).filter(isUpload).slice(0, 10)
+}
 
 /** @type {any[]} */
 let runs = []
@@ -450,19 +561,36 @@ function newRun(fields) {
 
 // ---------- карта проекта перед задачей и «Что может задеть» в PR (из графа импортов, без ИИ) ----------
 let mapping = false
-const MAP_KINDS = new Set(['issue', 'pr', 'task', 'bug', 'idea', 'feature'])
+const MAP_KINDS = new Set([
+  'issue',
+  'pr',
+  'task',
+  'bug',
+  'idea',
+  'feature',
+])
 async function prepareMap(run) {
   if (readConfig().repos?.[run.repo]?.map === false || !MAP_KINDS.has(run.kind) || !isRepo(run.repo))
     return
   let text = `${run.title || ''}\n${run.text || ''}`
   let extra = []
   if (run.kind === 'issue') {
-    const i = await gh(['issue', 'view', String(run.issue), '-R', run.repo, '--json', 'title,body'])
+    const i = await gh([
+      'issue',
+      'view',
+      String(run.issue),
+      '-R',
+      run.repo,
+      '--json',
+      'title,body',
+    ])
     text += `\n${i?.title || ''}\n${i?.body || ''}`
   }
   if (run.kind === 'pr') {
     const files = await gh(['api', `repos/${run.repo}/pulls/${run.pr}/files?per_page=100`])
-    extra = (Array.isArray(files) ? files : []).map(f => f.filename)
+    extra = (Array.isArray(files)
+      ? files
+      : []).map(f => f.filename)
   }
   const g = await codeData(run.repo)
   if (!g.files?.length)
@@ -472,7 +600,13 @@ async function prepareMap(run) {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file, md)
   run.mapFile = file
-  appendEvent(run, { type: 'bot_note', text: `Карта проекта: ${relevant.length ? `похоже, задача про ${relevant.slice(0, 4).join(', ')}` : 'слои и слайсы'} — из графа импортов`, at: Date.now() })
+  appendEvent(run, {
+    type: 'bot_note',
+    text: `Карта проекта: ${relevant.length
+      ? `похоже, задача про ${relevant.slice(0, 4).join(', ')}`
+      : 'слои и слайсы'} — из графа импортов`,
+    at: Date.now(),
+  })
 }
 // граф импортов произвольной ветки (для PR) — кеш по sha
 const refCache = new Map()
@@ -482,7 +616,11 @@ async function graphAt(repo, ref) {
   if (!refCache.has(key)) {
     const files = await g.list()
     const lines = await g.grep(IMPORT_RE)
-    refCache.set(key, codeGraph({ list: () => files, read: g.read, grep: () => lines }))
+    refCache.set(key, codeGraph({
+      list: () => files,
+      read: g.read,
+      grep: () => lines,
+    }))
     if (refCache.size > 20)
       refCache.delete(refCache.keys().next().value)
   }
@@ -494,13 +632,24 @@ async function ghJson(method, p, body) {
   const file = path.join(UPLOADS, 'tmp', `${Date.now()}-${Math.random().toString(36).slice(2)}.json`)
   fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file, JSON.stringify(body || {}))
-  try { return JSON.parse(await sh('gh', ['api', '-X', method, p, '--input', file]) || '{}') }
+  try {
+    return JSON.parse(await sh('gh', [
+      'api',
+      '-X',
+      method,
+      p,
+      '--input',
+      file,
+    ]) || '{}')
+  }
   finally { fs.rmSync(file, { force: true }) }
 }
 async function upsertComment(repo, n, marker, body) {
   const R = `repos/${repo}`
   const comments = await gh(['api', `${R}/issues/${n}/comments?per_page=100`])
-  const mine = (Array.isArray(comments) ? comments : []).find(c => String(c.body).includes(marker))
+  const mine = (Array.isArray(comments)
+    ? comments
+    : []).find(c => String(c.body).includes(marker))
   if (mine)
     await ghJson('PATCH', `${R}/issues/comments/${mine.id}`, { body })
   else await ghJson('POST', `${R}/issues/${n}/comments`, { body })
@@ -513,8 +662,13 @@ async function prReport(run) {
   if (!n)
     return false
   const rc = readConfig().repos?.[run.repo] || {}
-  const [files, pr] = await Promise.all([gh(['api', `${R}/pulls/${n}/files?per_page=100`]), gh(['api', `${R}/pulls/${n}`])])
-  const changed = (Array.isArray(files) ? files : []).map(f => f.filename)
+  const [files, pr] = await Promise.all([
+    gh(['api', `${R}/pulls/${n}/files?per_page=100`]),
+    gh(['api', `${R}/pulls/${n}`]),
+  ])
+  const changed = (Array.isArray(files)
+    ? files
+    : []).map(f => f.filename)
   if (!changed.length)
     return false
   const base = await codeData(run.repo)
@@ -529,7 +683,14 @@ async function prReport(run) {
       const fresh = head.edges.filter(e => e.bad && !had.has(key(e)))
       run.fsdNew = fresh.map(e => `${e.from} → ${e.to}: ${e.bad}`)
       parts.push(fresh.length
-        ? ['### Правила слоёв FSD', `⚠️ Новых нарушений: **${fresh.length}**`, ...fresh.slice(0, 15).map(e => `- \`${e.from}\` → \`${e.to}\` — ${e.bad}`), fresh.length > 15 ? `- … и ещё ${fresh.length - 15}` : ''].filter(Boolean).join('\n')
+        ? [
+            '### Правила слоёв FSD',
+            `⚠️ Новых нарушений: **${fresh.length}**`,
+            ...fresh.slice(0, 15).map(e => `- \`${e.from}\` → \`${e.to}\` — ${e.bad}`),
+            fresh.length > 15
+              ? `- … и ещё ${fresh.length - 15}`
+              : '',
+          ].filter(Boolean).join('\n')
         : '### Правила слоёв FSD\n✅ Новых нарушений нет')
     }
     catch (e) { console.error('fsd:', e.message) }
@@ -543,13 +704,19 @@ async function prReport(run) {
 // ---------- скриншоты «до/после» ----------
 const SECRETS = path.join(BOT, 'keys', 'screens')
 const secretFile = (repo, kind) => path.join(SECRETS, `${repo.replace('/', '__')}.${kind}`)
-const secret = (repo, kind) => { try { return fs.readFileSync(secretFile(repo, kind), 'utf8').trim() } catch { return '' } }
+function secret(repo, kind) {
+  try { return fs.readFileSync(secretFile(repo, kind), 'utf8').trim() }
+  catch { return '' }
+}
 const UI_RE = /\.(?:vue|svelte|[jt]sx|css|scss|sass|less|html)$/
 const vercelSlug = b => String(b).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 async function reachable(url) {
   try {
-    const r = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(15000) })
+    const r = await fetch(url, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(15000),
+    })
     return r.status < 400 || r.status === 401 || r.status === 403
   }
   catch { return false }
@@ -558,9 +725,13 @@ async function previewOf(repo, rc, branch, sha) {
   if (rc.previewUrl)
     return rc.previewUrl.replace('{branch}', vercelSlug(branch)).replace('{sha}', sha.slice(0, 7)).replace(/\/$/, '')
   const deps = await gh(['api', `repos/${repo}/deployments?sha=${sha}&per_page=10`])
-  for (const dep of Array.isArray(deps) ? deps : []) {
+  for (const dep of Array.isArray(deps)
+    ? deps
+    : []) {
     const st = await gh(['api', `repos/${repo}/deployments/${dep.id}/statuses?per_page=5`])
-    const ok = (Array.isArray(st) ? st : []).find(x => x.state === 'success' && x.environment_url)
+    const ok = (Array.isArray(st)
+      ? st
+      : []).find(x => x.state === 'success' && x.environment_url)
     if (ok)
       return ok.environment_url.replace(/\/$/, '')
   }
@@ -571,9 +742,13 @@ async function siteOf(repo, rc) {
   const info = await gh(['api', `repos/${repo}`])
   cands.push(info?.homepage)
   const deps = await gh(['api', `repos/${repo}/deployments?environment=Production&per_page=3`])
-  for (const dep of Array.isArray(deps) ? deps : []) {
+  for (const dep of Array.isArray(deps)
+    ? deps
+    : []) {
     const st = await gh(['api', `repos/${repo}/deployments/${dep.id}/statuses?per_page=3`])
-    cands.push((Array.isArray(st) ? st : []).find(x => x.state === 'success')?.environment_url)
+    cands.push((Array.isArray(st)
+      ? st
+      : []).find(x => x.state === 'success')?.environment_url)
   }
   for (const u of cands.filter(Boolean)) {
     if (await reachable(u))
@@ -586,30 +761,63 @@ async function pushImages(repo, files, dir) {
   const R = `repos/${repo}`; const BR = 'agent-bot-screens'
   const head = await gh(['api', `${R}/git/ref/heads/${BR}`])
   const parent = head?.object?.sha
-  const baseTree = parent ? (await gh(['api', `${R}/git/commits/${parent}`]))?.tree?.sha : undefined
+  const baseTree = parent
+    ? (await gh(['api', `${R}/git/commits/${parent}`]))?.tree?.sha
+    : undefined
   const tree = []
   for (const f of files) {
-    const blob = await ghJson('POST', `${R}/git/blobs`, { content: fs.readFileSync(f.file).toString('base64'), encoding: 'base64' })
-    tree.push({ path: `${dir}/${path.basename(f.file)}`, mode: '100644', type: 'blob', sha: blob.sha })
+    const blob = await ghJson('POST', `${R}/git/blobs`, {
+      content: fs.readFileSync(f.file).toString('base64'),
+      encoding: 'base64',
+    })
+    tree.push({
+      path: `${dir}/${path.basename(f.file)}`,
+      mode: '100644',
+      type: 'blob',
+      sha: blob.sha,
+    })
   }
-  const t = await ghJson('POST', `${R}/git/trees`, baseTree ? { base_tree: baseTree, tree } : { tree })
-  const c = await ghJson('POST', `${R}/git/commits`, { message: `Скриншоты ${dir}`, tree: t.sha, parents: parent ? [parent] : [] })
+  const t = await ghJson('POST', `${R}/git/trees`, baseTree
+    ? { base_tree: baseTree, tree }
+    : { tree })
+  const c = await ghJson('POST', `${R}/git/commits`, {
+    message: `Скриншоты ${dir}`,
+    tree: t.sha,
+    parents: parent
+      ? [parent]
+      : [],
+  })
   if (parent)
     await ghJson('PATCH', `${R}/git/refs/heads/${BR}`, { sha: c.sha, force: false })
   else await ghJson('POST', `${R}/git/refs`, { ref: `refs/heads/${BR}`, sha: c.sha })
   return p => `https://github.com/${repo}/blob/${BR}/${dir}/${path.basename(p)}?raw=true`
 }
-const routeKey = r => (r === '/' ? 'home' : r.replace(/^\//, '').replace(/[^\w-]+/g, '_'))
+function routeKey(r) {
+  return r === '/'
+    ? 'home'
+    : r.replace(/^\//, '').replace(/[^\w-]+/g, '_')
+}
 async function screensJob(run) {
   const rc = readConfig().repos?.[run.repo] || {}
   if (rc.screens === false)
     return
   const n = Number(String(run.prUrl).split('/').pop()); const R = `repos/${run.repo}`
-  const [files, pr] = await Promise.all([gh(['api', `${R}/pulls/${n}/files?per_page=100`]), gh(['api', `${R}/pulls/${n}`])])
-  const changed = (Array.isArray(files) ? files : []).map(f => f.filename)
+  const [files, pr] = await Promise.all([
+    gh(['api', `${R}/pulls/${n}/files?per_page=100`]),
+    gh(['api', `${R}/pulls/${n}`]),
+  ])
+  const changed = (Array.isArray(files)
+    ? files
+    : []).map(f => f.filename)
   if (!changed.some(f => UI_RE.test(f)) || !pr?.head?.sha)
     return
-  const note = text => { appendEvent(run, { type: 'bot_note', text: `Скриншоты: ${text}`, at: Date.now() }); pushState() }
+  const note = (text) => {
+    appendEvent(run, {
+      type: 'bot_note',
+      text: `Скриншоты: ${text}`,
+      at: Date.now(),
+    }); pushState()
+  }
   note('правки интерфейса — жду превью PR')
   let after = ''
   for (let i = 0; i < 20 && !after; i++) {
@@ -624,11 +832,19 @@ async function screensJob(run) {
   const before = await siteOf(run.repo, rc)
   const routes = pickRoutes(await codeData(run.repo), changed, sliceOf, rc.pages)
   const shots = routes.flatMap(r => [
-    ...(before ? [{ key: `${routeKey(r)}-before`, url: before + r }] : []),
+    ...(before
+      ? [
+          { key: `${routeKey(r)}-before`, url: before + r },
+        ]
+      : []),
     { key: `${routeKey(r)}-after`, url: after + r },
   ])
   const outDir = path.join(UPLOADS, 'screens', `${run.repo.replace('/', '__')}-pr${n}-${pr.head.sha.slice(0, 7)}`)
-  const { files: shotsDone } = await shoot(shots, { cookie: secret(run.repo, 'cookie'), bypass: secret(run.repo, 'bypass'), outDir })
+  const { files: shotsDone } = await shoot(shots, {
+    cookie: secret(run.repo, 'cookie'),
+    bypass: secret(run.repo, 'bypass'),
+    outDir,
+  })
   const blocked = new Set(shotsDone.map(f => f.blocked).filter(Boolean))
   if (blocked.has('vercel'))
     note('превью закрыто защитой Vercel — добавьте секрет обхода (Vercel → Settings → Deployment Protection → Protection Bypass for Automation)')
@@ -648,7 +864,11 @@ async function screensJob(run) {
   catch (e) { return note(`в PR не загрузились: ${e.message}`) }
   const img = (key, vp) => {
     const f = good.find(x => x.key === key && x.vp === vp)
-    return f ? `<img src="${link(f.file)}" width="${vp === 'phone' ? 260 : 420}">` : '—'
+    return f
+      ? `<img src="${link(f.file)}" width="${vp === 'phone'
+        ? 260
+        : 420}">`
+      : '—'
   }
   const body = [
     '<!-- agent-bot:screens -->',
@@ -658,7 +878,9 @@ async function screensJob(run) {
       '',
       `| | до${before ? ' (основной сайт)' : ''} | после (превью PR) |`,
       '|---|---|---|',
-      ...VIEWPORTS.map(vp => `| ${vp.title} | ${before ? img(`${routeKey(r)}-before`, vp.id) : 'нет адреса сайта'} | ${img(`${routeKey(r)}-after`, vp.id)} |`),
+      ...VIEWPORTS.map(vp => `| ${vp.title} | ${before
+        ? img(`${routeKey(r)}-before`, vp.id)
+        : 'нет адреса сайта'} | ${img(`${routeKey(r)}-after`, vp.id)} |`),
       '',
     ]),
     `<sub>до — ${before || '—'} · после — ${after} · agent-bot, Playwright</sub>`,
@@ -688,7 +910,10 @@ function next() {
   // перед первым запуском — карта проекта (не дольше 25 с; без неё задача всё равно стартует)
   if (!run.mapDone && !run.continue && !run.reply) {
     mapping = true
-    Promise.race([prepareMap(run), new Promise(r => setTimeout(r, 25000))])
+    Promise.race([
+      prepareMap(run),
+      new Promise(r => setTimeout(r, 25000)),
+    ])
       .catch(e => console.error('карта проекта:', e.message))
       .finally(() => { mapping = false; run.mapDone = true; next() })
     return
@@ -706,13 +931,21 @@ function next() {
           : []),
       ]
     : run.reply
-      ? ['_resume', run.sessionId, planning(run) ? run.reply + boardForBot(run.board) : run.reply]
+      ? [
+          '_resume',
+          run.sessionId,
+          planning(run)
+            ? run.reply + boardForBot(run.board)
+            : run.reply,
+        ]
       : KINDS[run.kind](run)
   const sendFiles = cont
     ? null
     : run.reply
       ? run.replyFiles
-      : !run.sessionId ? run.files : null
+      : !run.sessionId
+          ? run.files
+          : null
   run.continue = undefined; run.reason = undefined; run.resumeAt = undefined; run.lastText = undefined
   if (cont) {
     appendEvent(run, {
@@ -735,8 +968,13 @@ function next() {
       text: 'Запуск',
       at: Date.now(),
     })
-    if (sendFiles?.length)
-      appendEvent(run, { type: 'bot_files', files: sendFiles.map(fileInfo), at: Date.now() })
+    if (sendFiles?.length) {
+      appendEvent(run, {
+        type: 'bot_files',
+        files: sendFiles.map(fileInfo),
+        at: Date.now(),
+      })
+    }
   }
   run.reply = undefined; run.replyFiles = undefined
   if (run.watchdog) { run.watchdog = undefined; run.reason = undefined }
@@ -789,13 +1027,21 @@ function next() {
   pushState()
 
   // ---------- сторож: зависание, слишком долго, хождение по кругу ----------
-  const wd = { last: Date.now(), since: Date.now(), sigs: new Map() }
+  const wd = {
+    last: Date.now(),
+    since: Date.now(),
+    sigs: new Map(),
+  }
   const trip = (text) => {
     if (current?.run !== run || run.status !== 'running')
       return
     run.status = 'stopped'; run.watchdog = text
     run.reason = `Сторож остановил задачу: ${text}. Правки сохранены WIP-коммитом — «Продолжить» продолжит с того же места.`
-    appendEvent(run, { type: 'bot_note', text: `Сторож: ${text}`, at: Date.now() })
+    appendEvent(run, {
+      type: 'bot_note',
+      text: `Сторож: ${text}`,
+      at: Date.now(),
+    })
     try { process.kill(-child.pid, 'SIGTERM') }
     catch {}
   }
@@ -813,7 +1059,12 @@ function next() {
     for (const c of ev.message.content) {
       if (c.type !== 'tool_use')
         continue
-      if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(c.name)) { wd.sigs.clear(); continue }
+      if ([
+        'Edit',
+        'Write',
+        'MultiEdit',
+        'NotebookEdit',
+      ].includes(c.name)) { wd.sigs.clear(); continue }
       if (c.name === 'TodoWrite')
         continue
       const sig = `${c.name} ${JSON.stringify(c.input || {})}`
@@ -821,7 +1072,9 @@ function next() {
       wd.sigs.set(sig, n)
       if (n >= lim) {
         const what = String(c.input?.command || c.input?.file_path || c.input?.pattern || '').slice(0, 80)
-        trip(`${n} раз подряд одно и то же без правок (${c.name}${what ? `: ${what}` : ''}) — ходит по кругу`)
+        trip(`${n} раз подряд одно и то же без правок (${c.name}${what
+          ? `: ${what}`
+          : ''}) — ходит по кругу`)
       }
     }
   }
@@ -857,18 +1110,42 @@ function next() {
       if (plan) {
         const had = run.board?.items?.length
         run.board = mergeBotPlan(run.board, plan)
-        appendEvent(run, { type: 'bot_note', text: had ? `План: предложений на доске — ${run.board.suggestions.length}` : `План на доске: ${plan.items.length} элементов${plan.sketches.length ? `, эскизов — ${plan.sketches.length}` : ''}`, at: Date.now() })
+        appendEvent(run, {
+          type: 'bot_note',
+          text: had
+            ? `План: предложений на доске — ${run.board.suggestions.length}`
+            : `План на доске: ${plan.items.length} элементов${plan.sketches.length
+              ? `, эскизов — ${plan.sketches.length}`
+              : ''}`,
+          at: Date.now(),
+        })
       }
       else if (planning(run) && /```plan/.test(String(ev.result || ''))) {
-        appendEvent(run, { type: 'bot_note', text: 'Блок плана не прочитался (битый JSON) — попросите бота прислать план заново', at: Date.now() })
+        appendEvent(run, {
+          type: 'bot_note',
+          text: 'Блок плана не прочитался (битый JSON) — попросите бота прислать план заново',
+          at: Date.now(),
+        })
       }
       // вопрос бота во время разработки фичи → пауза: доска снова открыта, вопрос — у шага
       const q = run.kind === 'feature' && run.planApproved && !ev.is_error && parseQuestion(ev.result, run.board)
       if (q) {
         run.board = pauseBoard(run.board, q)
-        run.pause = { text: q.text, step: q.step, options: q.options, rev: run.board.rev, at: Date.now() }
+        run.pause = {
+          text: q.text,
+          step: q.step,
+          options: q.options,
+          rev: run.board.rev,
+          at: Date.now(),
+        }
         const step = q.step && run.board.items.find(i => i.id === q.step)
-        appendEvent(run, { type: 'bot_note', text: `Вопрос${step ? ` к шагу «${step.title || step.id}»` : ''} — работа на паузе, ответ на доске`, at: Date.now() })
+        appendEvent(run, {
+          type: 'bot_note',
+          text: `Вопрос${step
+            ? ` к шагу «${step.title || step.id}»`
+            : ''} — работа на паузе, ответ на доске`,
+          at: Date.now(),
+        })
       }
       // точные цифры хода (по всем моделям, включая подагентов)
       let tin = 0; let tout = 0; let cached = 0
@@ -961,7 +1238,17 @@ function next() {
     notify(run)
     if (run.prUrl && run.status === 'done') {
       trackPanelWork(prReport(run)
-        .then(r => r && (appendEvent(run, { type: 'bot_note', text: `${r === 'updated' ? 'Обновлён' : 'В PR —'} комментарий «Что может задеть»${run.fsdNew ? (run.fsdNew.length ? ` · новых нарушений FSD: ${run.fsdNew.length}` : ' · новых нарушений FSD нет') : ''}`, at: Date.now() }), pushState()))
+        .then(r => r && (appendEvent(run, {
+          type: 'bot_note',
+          text: `${r === 'updated'
+            ? 'Обновлён'
+            : 'В PR —'} комментарий «Что может задеть»${run.fsdNew
+            ? (run.fsdNew.length
+                ? ` · новых нарушений FSD: ${run.fsdNew.length}`
+                : ' · новых нарушений FSD нет')
+            : ''}`,
+          at: Date.now(),
+        }), pushState()))
         .catch(e => console.error('pr report:', e.message)))
       trackPanelWork(screensJob(run).catch(e => console.error('screens:', e.message)))
     }
@@ -1122,8 +1409,11 @@ function writeConfig(patch) {
       c[k] = v
     }
     // начала команд для фонового режима: без ; & | $ ` и кавычек
-    if ((k === 'allowCmds' || k === 'denyCmds') && Array.isArray(v))
-      c[k] = [...new Set(v.map(x => String(x).trim()).filter(x => /^[\w@./:=+ -]{1,80}$/.test(x)))].slice(0, 50)
+    if ((k === 'allowCmds' || k === 'denyCmds') && Array.isArray(v)) {
+      c[k] = [
+        ...new Set(v.map(x => String(x).trim()).filter(x => /^[\w@./:=+ -]{1,80}$/.test(x))),
+      ].slice(0, 50)
+    }
     if (k === 'skillsOff' && Array.isArray(v))
       c.skillsOff = v.filter(x => typeof x === 'string' && x.length < 200)
     if (k === 'autoEvery' && Number(v) >= 2 && Number(v) <= 120)
@@ -1160,12 +1450,23 @@ const REPO_FIELDS = {
 const AUTO_FIELDS = ['issues', 'ci', 'reviews', 'conflicts']
 function writeRepoConfig(repo, patch) {
   const c = readConfig()
-  const rc = { ...(c.repos?.[repo] || {}) }
+  const rc = {
+    ...(c.repos?.[repo] || {}),
+  }
   for (const [k, v] of Object.entries(patch)) {
-    if (REPO_FIELDS[k]?.(v))
-      rc[k] = typeof v === 'string' ? v.trim() : v
-    if (k === 'auto' && v && typeof v === 'object')
-      rc.auto = Object.fromEntries(AUTO_FIELDS.map(f => [f, f in v ? !!v[f] : !!rc.auto?.[f]]))
+    if (REPO_FIELDS[k]?.(v)) {
+      rc[k] = typeof v === 'string'
+        ? v.trim()
+        : v
+    }
+    if (k === 'auto' && v && typeof v === 'object') {
+      rc.auto = Object.fromEntries(AUTO_FIELDS.map(f => [
+        f,
+        f in v
+          ? !!v[f]
+          : !!rc.auto?.[f],
+      ]))
+    }
   }
   // GitHub reports merge timestamps at second precision.
   if (patch.docReview === true)
@@ -1174,7 +1475,10 @@ function writeRepoConfig(repo, patch) {
     delete rc.docReviewSince
   if (Object.hasOwn(patch, 'dependencyUpdates'))
     rc.dependencyUpdates = dependencySettings(patch.dependencyUpdates, rc.dependencyUpdates)
-  c.repos = { ...(c.repos || {}), [repo]: rc }
+  c.repos = {
+    ...(c.repos || {}),
+    [repo]: rc,
+  }
   fs.writeFileSync(CONFIG, JSON.stringify(c, null, 2))
   return rc
 }
@@ -1278,23 +1582,46 @@ function scanDocumentation() {
 
 // ---------- правила владельца: rules/_global.md и rules/<owner>__<repo>.md ----------
 const RULES = path.join(BOT, 'rules')
-const rulesFile = repo => path.join(RULES, repo ? `${repo.replace('/', '__')}.md` : '_global.md')
+function rulesFile(repo) {
+  return path.join(RULES, repo
+    ? `${repo.replace('/', '__')}.md`
+    : '_global.md')
+}
 function readRules(repo) {
-  const r = f => {
+  const r = (f) => {
     try { return fs.readFileSync(f, 'utf8') }
     catch { return '' }
   }
-  return { global: r(rulesFile()), repo: r(rulesFile(repo)) }
+  return {
+    global: r(rulesFile()),
+    repo: r(rulesFile(repo)),
+  }
 }
 
 // ---------- авторабота: issue «ready-for-agent», упавший CI, конфликты, ревью в PR бота ----------
 const AUTO_STATE = path.join(DATA, 'auto.json')
-let autoState = { seen: {}, ciTries: {}, day: '', count: 0, log: [], lastAt: 0 }
-try { autoState = { ...autoState, ...JSON.parse(fs.readFileSync(AUTO_STATE, 'utf8')) } }
+let autoState = {
+  seen: {},
+  ciTries: {},
+  day: '',
+  count: 0,
+  log: [],
+  lastAt: 0,
+}
+try {
+  autoState = {
+    ...autoState,
+    ...JSON.parse(fs.readFileSync(AUTO_STATE, 'utf8')),
+  }
+}
 catch {}
 const saveAuto = () => fs.writeFileSync(AUTO_STATE, JSON.stringify(autoState))
 function autoLog(repo, text) {
-  autoState.log.unshift({ at: Date.now(), repo, text })
+  autoState.log.unshift({
+    at: Date.now(),
+    repo,
+    text,
+  })
   autoState.log = autoState.log.slice(0, 50)
 }
 const isBotAuthor = a => !a || a.is_bot || /^app\/|\[bot\]$/.test(a.login || '')
@@ -1321,7 +1648,12 @@ async function autoTick(force = false) {
         autoLog(repo, 'Пропуск: исчерпан лимит Claude')
         continue
       }
-      const active = pred => runs.some(r => r.repo === repo && pred(r) && ['queued', 'running', 'waiting', 'limited'].includes(r.status))
+      const active = pred => runs.some(r => r.repo === repo && pred(r) && [
+        'queued',
+        'running',
+        'waiting',
+        'limited',
+      ].includes(r.status))
       const enqueue = (fields, why) => {
         if (autoState.count >= max) {
           autoLog(repo, `Дневной предел авторабот (${max}) — «${fields.title}» отложено`)
@@ -1334,7 +1666,20 @@ async function autoTick(force = false) {
         return true
       }
       if (a.issues) {
-        const issues = await gh(['issue', 'list', '-R', repo, '--state', 'open', '--label', 'ready-for-agent', '--limit', '20', '--json', 'number,title,labels'])
+        const issues = await gh([
+          'issue',
+          'list',
+          '-R',
+          repo,
+          '--state',
+          'open',
+          '--label',
+          'ready-for-agent',
+          '--limit',
+          '20',
+          '--json',
+          'number,title,labels',
+        ])
         for (const i of issues) {
           const key = `issue:${repo}#${i.number}`
           if (autoState.seen[key] || i.labels.some(l => l.name === 'in-progress') || active(r => r.issue === i.number))
@@ -1345,7 +1690,18 @@ async function autoTick(force = false) {
       }
       if (!a.ci && !a.reviews && !a.conflicts)
         continue
-      const prs = await gh(['pr', 'list', '-R', repo, '--state', 'open', '--limit', '30', '--json', 'number,title,headRefName,headRefOid,author,mergeable,statusCheckRollup'])
+      const prs = await gh([
+        'pr',
+        'list',
+        '-R',
+        repo,
+        '--state',
+        'open',
+        '--limit',
+        '30',
+        '--json',
+        'number,title,headRefName,headRefOid,author,mergeable,statusCheckRollup',
+      ])
       for (const p of prs.filter(p => p.headRefName?.startsWith('agent/') || isBotAuthor(p.author))) {
         if (active(r => r.kind === 'pr' && Number(r.pr) === p.number))
           continue
@@ -1355,7 +1711,12 @@ async function autoTick(force = false) {
         const job = (text, title, why, key) => {
           if (autoState.seen[key])
             return false
-          if (enqueue({ kind: 'pr', pr: p.number, text, title: `PR #${p.number}: ${title}` }, why)) {
+          if (enqueue({
+            kind: 'pr',
+            pr: p.number,
+            text,
+            title: `PR #${p.number}: ${title}`,
+          }, why)) {
             autoState.seen[key] = Date.now()
             return true
           }
@@ -1364,7 +1725,12 @@ async function autoTick(force = false) {
         if (a.conflicts && p.mergeable === 'CONFLICTING' && job('@conflicts', 'конфликт с базой', 'конфликт в PR', `conf:${id}:${p.headRefOid}`))
           continue
         if (a.ci) {
-          const failed = (p.statusCheckRollup || []).some(x => ['FAILURE', 'ERROR', 'TIMED_OUT', 'STARTUP_FAILURE'].includes(x.conclusion || x.state))
+          const failed = (p.statusCheckRollup || []).some(x => [
+            'FAILURE',
+            'ERROR',
+            'TIMED_OUT',
+            'STARTUP_FAILURE',
+          ].includes(x.conclusion || x.state))
           if (!failed) {
             delete autoState.ciTries[id]
           }
@@ -1380,7 +1746,15 @@ async function autoTick(force = false) {
           }
         }
         if (a.reviews) {
-          const v = await gh(['pr', 'view', String(p.number), '-R', repo, '--json', 'reviews,comments'])
+          const v = await gh([
+            'pr',
+            'view',
+            String(p.number),
+            '-R',
+            repo,
+            '--json',
+            'reviews,comments',
+          ])
           const times = [
             ...(v.reviews || []).filter(r => !isBotAuthor(r.author) && (r.state === 'CHANGES_REQUESTED' || r.body?.trim())).map(r => r.submittedAt),
             ...(v.comments || []).filter(r => !isBotAuthor(r.author)).map(r => r.createdAt),
@@ -1407,7 +1781,7 @@ async function autoTick(force = false) {
     }
   }
 }
-setInterval(() => autoTick(), 60000)
+setInterval(autoTick, 60000)
 function tokenInfo() {
   try {
     const t = fs.readFileSync(TOKEN, 'utf8').trim(); const st = fs.statSync(TOKEN)
@@ -1468,7 +1842,10 @@ function checkToken(token) {
 
 // ---------- уведомления: macOS, вкладка браузера, Telegram ----------
 const TG_TOKEN = path.join(BOT, 'keys', 'telegram-token')
-const tgToken = () => { try { return fs.readFileSync(TG_TOKEN, 'utf8').trim() } catch { return '' } }
+function tgToken() {
+  try { return fs.readFileSync(TG_TOKEN, 'utf8').trim() }
+  catch { return '' }
+}
 async function tg(method, payload, token = tgToken()) {
   const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
@@ -1490,8 +1867,14 @@ async function tgFiles(chat, files) {
       const photo = IMG.test(f) && !/\.gif$/i.test(f)
       const fd = new FormData()
       fd.append('chat_id', chat)
-      fd.append(photo ? 'photo' : 'document', new Blob([fs.readFileSync(f)]), path.basename(f))
-      const r = await fetch(`https://api.telegram.org/bot${tgToken()}/${photo ? 'sendPhoto' : 'sendDocument'}`, { method: 'POST', body: fd, signal: AbortSignal.timeout(60000) })
+      fd.append(photo ? 'photo' : 'document', new Blob([
+        fs.readFileSync(f),
+      ]), path.basename(f))
+      const r = await fetch(`https://api.telegram.org/bot${tgToken()}/${photo ? 'sendPhoto' : 'sendDocument'}`, {
+        method: 'POST',
+        body: fd,
+        signal: AbortSignal.timeout(60000),
+      })
       if (!r.ok)
         console.error('telegram file:', r.status, await r.text().catch(() => ''))
     }
@@ -1499,7 +1882,10 @@ async function tgFiles(chat, files) {
   }
 }
 function notify(run) {
-  const c = readConfig(); const on = { ...DEFAULTS.notifyOn, ...c.notifyOn }
+  const c = readConfig(); const on = {
+    ...DEFAULTS.notifyOn,
+    ...c.notifyOn,
+  }
   const kind = run.status === 'done'
     ? 'done'
     : run.status === 'waiting'
@@ -1512,20 +1898,43 @@ function notify(run) {
   const head = {
     done: run.prUrl ? 'PR готов' : 'Готово',
     waiting: 'Бот ждёт ответа',
-    failed: run.watchdog ? 'Сторож остановил' : run.status === 'limited' ? 'Упёрся в лимит' : 'Не получилось',
+    failed: run.watchdog
+      ? 'Сторож остановил'
+      : run.status === 'limited'
+        ? 'Упёрся в лимит'
+        : 'Не получилось',
   }[kind]
   const where = (run.repo || '').split('/')[1] || ''
-  const title = `${head}${where ? ` · ${where}` : ''}`
-  const detail = String(kind === 'waiting' ? run.lastText || '' : kind === 'failed' ? run.reason || run.error || '' : '').trim()
+  const title = `${head}${where
+    ? ` · ${where}`
+    : ''}`
+  const detail = String(kind === 'waiting'
+    ? run.lastText || ''
+    : kind === 'failed'
+      ? run.reason || run.error || ''
+      : '').trim()
   if (c.notify) {
     const q = s => String(s).replace(/["\\]/g, '').slice(0, 200)
     execFile('osascript', ['-e', `display notification "${q(detail || run.title)}" with title "${q(title)}" subtitle "${q(detail ? run.title : '')}"`], () => {})
   }
-  if (c.browserNotify)
-    broadcast({ type: 'notify', title, body: run.title, detail: detail.slice(0, 200), run: run.id })
+  if (c.browserNotify) {
+    broadcast({
+      type: 'notify',
+      title,
+      body: run.title,
+      detail: detail.slice(0, 200),
+      run: run.id,
+    })
+  }
   if (c.tgChat && tgToken()) {
     const out = run.outNew || []
-    const text = [`${title}`, run.title, detail && `\n${detail.slice(0, 600)}`, run.prUrl, out.length && `Файлов от бота: ${out.length} — в панели`].filter(Boolean).join('\n')
+    const text = [
+      `${title}`,
+      run.title,
+      detail && `\n${detail.slice(0, 600)}`,
+      run.prUrl,
+      out.length && `Файлов от бота: ${out.length} — в панели`,
+    ].filter(Boolean).join('\n')
     tg('sendMessage', { chat_id: c.tgChat, text, disable_web_page_preview: true })
       .then(() => tgFiles(c.tgChat, out))
       .catch(e => console.error('telegram:', e.message))
@@ -1561,16 +1970,24 @@ async function prSummary(run, fresh) {
         ? 'run'
         : c.conclusion === 'success'
           ? 'ok'
-          : ['neutral', 'skipped'].includes(c.conclusion) ? 'skip' : 'fail',
+          : ['neutral', 'skipped'].includes(c.conclusion)
+              ? 'skip'
+              : 'fail',
     })),
     ...(status?.statuses || []).map(s => ({
       name: s.context,
       url: s.target_url,
-      state: s.state === 'success' ? 'ok' : s.state === 'pending' ? 'run' : 'fail',
+      state: s.state === 'success'
+        ? 'ok'
+        : s.state === 'pending'
+          ? 'run'
+          : 'fail',
     })),
   ]
   const last = {}
-  for (const v of Array.isArray(reviews) ? reviews : []) {
+  for (const v of Array.isArray(reviews)
+    ? reviews
+    : []) {
     if (['APPROVED', 'CHANGES_REQUESTED'].includes(v.state))
       last[v.user?.login] = v.state
   }
@@ -1582,21 +1999,32 @@ async function prSummary(run, fresh) {
     state: pr.merged ? 'merged' : pr.state,
     draft: !!pr.draft,
     conflicts: pr.mergeable_state === 'dirty',
-    review: states.includes('CHANGES_REQUESTED') ? 'changes' : states.includes('APPROVED') ? 'approved' : null,
+    review: states.includes('CHANGES_REQUESTED')
+      ? 'changes'
+      : states.includes('APPROVED')
+        ? 'approved'
+        : null,
     comments: (pr.comments || 0) + (pr.review_comments || 0),
     additions: pr.additions,
     deletions: pr.deletions,
     changed: pr.changed_files,
     checks,
-    files: (Array.isArray(files) ? files : []).map(f => ({
+    files: (Array.isArray(files)
+      ? files
+      : []).map(f => ({
       name: f.filename,
       status: f.status,
       add: f.additions,
       del: f.deletions,
-      patch: f.patch && f.patch.length > 30000 ? `${f.patch.slice(0, 30000)}\n… (обрезано)` : f.patch || '',
+      patch: f.patch && f.patch.length > 30000
+        ? `${f.patch.slice(0, 30000)}\n… (обрезано)`
+        : f.patch || '',
     })),
   }
-  prCache.set(key, { at: Date.now(), data })
+  prCache.set(key, {
+    at: Date.now(),
+    data,
+  })
   return data
 }
 
@@ -1689,7 +2117,11 @@ async function repoList(force) {
 async function loadRepos() {
   // все установки приложения: ваш аккаунт и организации
   const r = await new Promise(resolve => execFile(path.join(BOT, 'token.sh'), ['--repos'], { env: ENV, timeout: 30000 }, (err, out) => {
-    try { resolve(err ? [] : JSON.parse(out)) }
+    try {
+      resolve(err
+        ? []
+        : JSON.parse(out))
+    }
     catch { resolve([]) }
   }))
   const list = (Array.isArray(r)
@@ -1916,7 +2348,10 @@ async function handleRequest(req, res) {
   if (p === '/api/skills' && req.method === 'GET') {
     const repo = repoOf(url.searchParams.get('repo'))
     const work = path.join(BOT, 'work', repo.replace('/', '__'))
-    return json(res, { skills: skills.listSkills(work).map(({ dir, file, ...x }) => x), sources: skills.listSources(work).map(({ dir, ...x }) => x) })
+    return json(res, {
+      skills: skills.listSkills(work).map(({ dir, file, ...x }) => x),
+      sources: skills.listSources(work).map(({ dir, ...x }) => x),
+    })
   }
   if (p === '/api/skills/toggle' && req.method === 'POST') {
     const b = await body(req)
@@ -1924,7 +2359,9 @@ async function handleRequest(req, res) {
     if (b.on)
       off.delete(b.id)
     else off.add(b.id)
-    writeConfig({ skillsOff: [...off] })
+    writeConfig({
+      skillsOff: [...off],
+    })
     skills.build()
     return json(res, { ok: true })
   }
@@ -1951,7 +2388,16 @@ async function handleRequest(req, res) {
     const b = await body(req)
     const repo = repoOf(b.repo)
     fs.mkdirSync(RULES, { recursive: true })
-    for (const [k, f] of [['global', rulesFile()], ['repo', rulesFile(repo)]]) {
+    for (const [k, f] of [
+      [
+        'global',
+        rulesFile(),
+      ],
+      [
+        'repo',
+        rulesFile(repo),
+      ],
+    ]) {
       if (typeof b[k] === 'string') {
         if (b[k].length > 20000)
           return json(res, { error: 'Слишком длинно' }, 400)
@@ -1976,7 +2422,7 @@ async function handleRequest(req, res) {
       return json(res, { error: error.message }, 400)
     }
     if (b.auto)
-      setTimeout(() => autoTick(true), 1000)
+      setTimeout(autoTick, 1000, true)
     if (typeof b.docReview === 'boolean' || typeof b.base === 'string') {
       announceDocReview(repo)
       if (isRepo(repo) && rc.docReviewSince)
@@ -2021,8 +2467,14 @@ async function handleRequest(req, res) {
     }
   }
   // авторабота: журнал
-  if (p === '/api/auto' && req.method === 'GET')
-    return json(res, { log: autoState.log, count: autoState.count, max: readConfig().autoMaxPerDay, lastAt: autoState.lastAt })
+  if (p === '/api/auto' && req.method === 'GET') {
+    return json(res, {
+      log: autoState.log,
+      count: autoState.count,
+      max: readConfig().autoMaxPerDay,
+      lastAt: autoState.lastAt,
+    })
+  }
   if (p === '/api/auto/run' && req.method === 'POST') {
     await autoTick(true)
     return json(res, { log: autoState.log })
@@ -2077,8 +2529,11 @@ async function handleRequest(req, res) {
       ? b.ai
       : cfgNow.repos?.[repo]?.ai || cfgNow.ai
     if (!AIS[ai]) {
-      if (['claude', 'codex'].includes(b.ai))
-        return json(res, { error: `${b.ai === 'codex' ? 'Codex' : 'Claude Code'} не установлен` }, 400)
+      if (['claude', 'codex'].includes(b.ai)) {
+        return json(res, { error: `${b.ai === 'codex'
+          ? 'Codex'
+          : 'Claude Code'} не установлен` }, 400)
+      }
       ai = cfgNow.ai
     }
     const refs = (Array.isArray(b.refs)
@@ -2090,7 +2545,9 @@ async function handleRequest(req, res) {
       ai,
       repo,
       refs: refs.length ? refs : undefined,
-      files: pickFiles(b.files).length ? pickFiles(b.files) : undefined,
+      files: pickFiles(b.files).length
+        ? pickFiles(b.files)
+        : undefined,
     }
     const made = []
     if (b.kind === 'queue' || b.kind === 'chain') {
@@ -2179,13 +2636,20 @@ async function handleRequest(req, res) {
     let name = 'file'
     try { name = decodeURIComponent(String(req.headers['x-name'] || 'file')) }
     catch {}
-    const ext = (name.match(/\.([a-z0-9]{1,8})$/i)?.[1] || (MIME[String(req.headers['content-type']).split('/')[1]] ? String(req.headers['content-type']).split('/')[1] : '')).toLowerCase()
+    const ext = (name.match(/\.([a-z0-9]{1,8})$/i)?.[1] || (MIME[String(req.headers['content-type']).split('/')[1]]
+      ? String(req.headers['content-type']).split('/')[1]
+      : '')).toLowerCase()
     const base = name.replace(/\.[^.]*$/, '').replace(/[^\w\-а-яё ]+/gi, '_').trim().slice(0, 60) || 'file'
     const dir = path.join(UPLOADS, new Date().toISOString().slice(0, 10))
     fs.mkdirSync(dir, { recursive: true })
-    const file = path.join(dir, `${Math.random().toString(36).slice(2, 10).padEnd(8, '0')}-${base}${ext ? `.${ext}` : ''}`)
+    const file = path.join(dir, `${Math.random().toString(36).slice(2, 10).padEnd(8, '0')}-${base}${ext
+      ? `.${ext}`
+      : ''}`)
     fs.writeFileSync(file, Buffer.concat(chunks))
-    return json(res, { ...fileInfo(file), size })
+    return json(res, {
+      ...fileInfo(file),
+      size,
+    })
   }
   if (p === '/api/file') { // превью вложений — только из uploads/
     const f = url.searchParams.get('p')
@@ -2212,7 +2676,9 @@ async function handleRequest(req, res) {
       fs.mkdirSync(SECRETS, { recursive: true, mode: 0o700 })
       fs.writeFileSync(secretFile(repo, b.kind), `${v}\n`, { mode: 0o600 }); fs.chmodSync(secretFile(repo, b.kind), 0o600)
     }
-    else fs.rmSync(secretFile(repo, b.kind), { force: true })
+    else {
+      fs.rmSync(secretFile(repo, b.kind), { force: true })
+    }
     return json(res, { cookie: !!secret(repo, 'cookie'), bypass: !!secret(repo, 'bypass') })
   }
   if (req.method === 'POST' && p === '/api/screens/test') { // пробный снимок главной сайта (и превью по шаблону), чтобы проверить доступ
@@ -2221,13 +2687,34 @@ async function handleRequest(req, res) {
     const rc = readConfig().repos?.[repo] || {}
     try {
       const site = await siteOf(repo, rc)
-      const shots = site ? [{ key: 'site', url: site + (rc.pages?.trim().split(/[,\s]+/)[0] || '/') }] : []
-      if (rc.previewUrl)
-        shots.push({ key: 'preview', url: rc.previewUrl.replace('{branch}', 'main').replace('{sha}', '') })
+      const shots = site
+        ? [
+            { key: 'site', url: site + (rc.pages?.trim().split(/[,\s]+/)[0] || '/') },
+          ]
+        : []
+      if (rc.previewUrl) {
+        shots.push({
+          key: 'preview',
+          url: rc.previewUrl.replace('{branch}', 'main').replace('{sha}', ''),
+        })
+      }
       if (!shots.length)
         return json(res, { error: 'Не знаю адрес сайта: задайте его или «Website» репозитория на GitHub' }, 400)
-      const { files } = await shoot(shots, { cookie: secret(repo, 'cookie'), bypass: secret(repo, 'bypass'), outDir: path.join(UPLOADS, 'screens', `test-${repo.replace('/', '__')}-${Date.now()}`) })
-      return json(res, { site, files: files.filter(f => f.vp === 'phone').map(f => ({ key: f.key, url: shots.find(x => x.key === f.key)?.url, file: f.file, blocked: f.blocked, error: f.error })) })
+      const { files } = await shoot(shots, {
+        cookie: secret(repo, 'cookie'),
+        bypass: secret(repo, 'bypass'),
+        outDir: path.join(UPLOADS, 'screens', `test-${repo.replace('/', '__')}-${Date.now()}`),
+      })
+      return json(res, {
+        site,
+        files: files.filter(f => f.vp === 'phone').map(f => ({
+          key: f.key,
+          url: shots.find(x => x.key === f.key)?.url,
+          file: f.file,
+          blocked: f.blocked,
+          error: f.error,
+        })),
+      })
     }
     catch (e) { return json(res, { error: e.message.split('\n')[0] }, 500) }
   }
@@ -2247,7 +2734,9 @@ async function handleRequest(req, res) {
     fs.mkdirSync(path.dirname(file), { recursive: true })
     fs.writeFileSync(file, JSON.stringify(d.scan, null, 2))
     const cfgNow = readConfig()
-    const ai = AIS[b.ai] ? b.ai : AIS[cfgNow.repos?.[repo]?.ai] ? cfgNow.repos[repo].ai : cfgNow.ai
+    const ai = AIS[b.ai]
+      ? b.ai
+      : AIS[cfgNow.repos?.[repo]?.ai] ? cfgNow.repos[repo].ai : cfgNow.ai
     const run = newRun({
       kind: 'task',
       repo,
@@ -2261,14 +2750,19 @@ async function handleRequest(req, res) {
 ${ARCH_FORMAT}`,
     })
     pushState(); next()
-    return json(res, { ids: [run.id] })
+    return json(res, {
+      ids: [run.id],
+    })
   }
   if (p === '/api/installations') { // установки GitHub App: чьи можно использовать (BOT_OWNERS), чужие — удалить
     const run = args => new Promise(resolve => execFile(path.join(BOT, 'token.sh'), args, { env: ENV, timeout: 30000 }, (err, out, e) => resolve({ err: err && (String(e).trim() || err.message), out })))
     if (req.method === 'POST') {
       const b = await body(req)
       if (b.remove) {
-        const r = await run(['--uninstall', String(Number(b.remove))])
+        const r = await run([
+          '--uninstall',
+          String(Number(b.remove)),
+        ])
         if (r.err)
           return json(res, { error: r.err }, 400)
       }
@@ -2277,12 +2771,16 @@ ${ARCH_FORMAT}`,
         const text = fs.readFileSync(file, 'utf8')
         const cur = (text.match(/^BOT_OWNERS=['"]?([^'"\n]*)/m)?.[1] || '').split(',').map(x => x.trim()).filter(Boolean)
         const next = b.allow
-          ? [...new Set([...cur, b.owner])]
+          ? [
+              ...new Set([...cur, b.owner]),
+            ]
           : cur.filter(x => x.toLowerCase() !== b.owner.toLowerCase())
         if (!next.length)
           return json(res, { error: 'Нужен хотя бы один разрешённый владелец' }, 400)
         const line = `BOT_OWNERS='${next.join(',')}'`
-        fs.writeFileSync(file, /^BOT_OWNERS=.*$/m.test(text) ? text.replace(/^BOT_OWNERS=.*$/m, line) : `${text.replace(/\n?$/, '\n')}${line}\n`, { mode: 0o600 })
+        fs.writeFileSync(file, /^BOT_OWNERS=.*$/m.test(text)
+          ? text.replace(/^BOT_OWNERS=.*$/m, line)
+          : `${text.replace(/\n?$/, '\n')}${line}\n`, { mode: 0o600 })
       }
       reposCache = { at: 0, list: [] }
     }
@@ -2317,9 +2815,14 @@ ${ARCH_FORMAT}`,
         const chat = [...ups].reverse().map(u => (u.message || u.my_chat_member || {}).chat).find(Boolean)
         if (!chat)
           return json(res, { error: 'Боту пока никто не писал — откройте его в Telegram и нажмите «Старт»' }, 400)
-        writeConfigRaw({ tgChat: String(chat.id) })
+        writeConfigRaw({
+          tgChat: String(chat.id),
+        })
         await tg('sendMessage', { chat_id: chat.id, text: 'Готово: сюда будут приходить сообщения о задачах бота.' })
-        return json(res, { set: true, chat: String(chat.id) })
+        return json(res, {
+          set: true,
+          chat: String(chat.id),
+        })
       }
       if (b.test) {
         await tg('sendMessage', { chat_id: c.tgChat, text: 'Проверка: уведомления работают.' })
@@ -2387,8 +2890,11 @@ ${ARCH_FORMAT}`,
       let text = b.text || 'Посмотри вложения.'
       // вопрос из карточки доски — с привязкой к шагу
       const item = b.step && b.text && run.board?.items?.find(i => i.id === b.step)
-      if (item)
-        text = `Про ${item.type === 'note' ? 'заметку' : 'шаг'} «${item.title || item.text.slice(0, 60)}» (id ${item.id}): ${b.text}`
+      if (item) {
+        text = `Про ${item.type === 'note'
+          ? 'заметку'
+          : 'шаг'} «${item.title || item.text.slice(0, 60)}» (id ${item.id}): ${b.text}`
+      }
       // бот ждёт ответа на вопрос фичи: ответ в ленте — тоже «Продолжить работу» (с вопросом и обновлённым планом)
       if (run.pause) {
         const err = resumePaused(run, text)

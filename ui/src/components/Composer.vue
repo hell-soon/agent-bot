@@ -78,7 +78,12 @@ async function submit() {
   err.value = ''
   if (at.busy.value)
     return (err.value = 'Файлы ещё загружаются')
-  const b: Record<string, any> = { model: model.value, ai: ai.value, refs: refs.value, files: at.paths() }
+  const b: Record<string, any> = {
+    model: model.value,
+    ai: ai.value,
+    refs: refs.value,
+    files: at.paths(),
+  }
   const text = c.draft.trim()
   if (c.mode === 'issue') {
     if (!issuePick.value)

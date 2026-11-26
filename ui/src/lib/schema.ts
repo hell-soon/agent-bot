@@ -38,8 +38,14 @@ const CHECK = /\b(?:test|tests|lint|typecheck|type-check|build|check|vitest|jest
 const GIT = /^\s*git (?:add|commit|push|checkout|switch|merge|rebase|stash|restore|reset|branch|cherry-pick)\b/
 
 function classify(name: string, i: any = {}): Phase {
-  if (['Edit', 'MultiEdit', 'Write', 'NotebookEdit'].includes(name))
+  if ([
+    'Edit',
+    'MultiEdit',
+    'Write',
+    'NotebookEdit',
+  ].includes(name)) {
     return 'edit'
+  }
   if (name === 'TodoWrite')
     return 'plan'
   if (['Skill', 'Task', 'Agent'].includes(name))
@@ -71,14 +77,22 @@ function stepLabel(name: string, i: any, short: (p: string) => string) {
   }
 }
 
-const plural = (n: number, a: string, b: string, c: string) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? a : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? b : c}`
+function plural(n: number, a: string, b: string, c: string) {
+  return `${n} ${n % 10 === 1 && n % 100 !== 11
+    ? a
+    : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)
+      ? b
+      : c}`
+}
 
 function summary(n: SchemaNode) {
   const s = n.steps.length
   switch (n.kind) {
     case 'read': return plural(s, 'шаг', 'шага', 'шагов')
     case 'edit': return `${plural(s, 'правка', 'правки', 'правок')} в ${plural(n.files.length, 'файле', 'файлах', 'файлах')}`
-    case 'check': return n.errors ? `${plural(s, 'запуск', 'запуска', 'запусков')}, упало ${n.errors}` : `${plural(s, 'запуск', 'запуска', 'запусков')}, всё прошло`
+    case 'check': return n.errors
+      ? `${plural(s, 'запуск', 'запуска', 'запусков')}, упало ${n.errors}`
+      : `${plural(s, 'запуск', 'запуска', 'запусков')}, всё прошло`
     case 'git': case 'pr': case 'agent': case 'plan': return n.steps.map(x => x.label).slice(-1)[0] || ''
     default: return n.sub
   }
@@ -89,7 +103,18 @@ export function buildSchema(events: any[], short: (p: string) => string) {
   const tools = new Map<string, { step: Step, node: SchemaNode }>() // без ссылки шаг → этап: круг ломает Vue
   let lastText = ''
   const open = (kind: Phase, ei: number, t?: number, title?: string, sub = '') => {
-    const n: SchemaNode = { id: nodes.length, kind, title: title ?? PHASE[kind].title, sub, t0: t, t1: t, ei, steps: [], files: [], errors: 0 }
+    const n: SchemaNode = {
+      id: nodes.length,
+      kind,
+      title: title ?? PHASE[kind].title,
+      sub,
+      t0: t,
+      t1: t,
+      ei,
+      steps: [],
+      files: [],
+      errors: 0,
+    }
     nodes.push(n)
     return n
   }
@@ -110,7 +135,10 @@ export function buildSchema(events: any[], short: (p: string) => string) {
         let n = cur()
         if (!n || n.kind !== kind)
           n = open(kind, ei, t) // у старых задач у шагов нет времени — этап без времени, а не с чужим
-        const step: Step = { label: stepLabel(c.name, c.input || {}, short), ei }
+        const step: Step = {
+          label: stepLabel(c.name, c.input || {}, short),
+          ei,
+        }
         n.steps.push(step)
         tools.set(c.id, { step, node: n })
         const fp = c.input?.file_path
@@ -128,7 +156,9 @@ export function buildSchema(events: any[], short: (p: string) => string) {
       open('answer', ei, t, undefined, String(ev.text || '').slice(0, 160))
     }
     else if (ev.type === 'bot_files' && ev.files?.length) {
-      open('files', ei, t, ev.from === 'bot' ? 'Файлы от бота' : 'Ваши вложения', ev.files.map((f: any) => f.name).join(', '))
+      open('files', ei, t, ev.from === 'bot'
+        ? 'Файлы от бота'
+        : 'Ваши вложения', ev.files.map((f: any) => f.name).join(', '))
     }
     else if (ev.type === 'bot_result' && ev.pr) {
       open('pr', ei, t, `PR #${String(ev.pr).split('/').pop()} открыт`, String(ev.pr).replace('https://github.com/', ''))
@@ -141,18 +171,28 @@ export function buildSchema(events: any[], short: (p: string) => string) {
     }
     else if (ev.type === 'bot_note') {
       const text = String(ev.text || '')
-      if (text === 'Запуск')
+      if (text === 'Запуск') {
         open('start', ei, t)
-      else if (text === 'Продолжение с того же места')
+      }
+      else if (text === 'Продолжение с того же места') {
         open('start', ei, t, 'Продолжение')
-      else if (text === 'Ждёт вашего ответа')
+      }
+      else if (text === 'Ждёт вашего ответа') {
         open('ask', ei, t, undefined, lastText.replace(/```choices[\s\S]*?```/g, '').trim().slice(-200))
-      else if (text.startsWith('Сторож'))
+      }
+      else if (text.startsWith('Сторож')) {
         open('error', ei, t, 'Сторож остановил', text.replace(/^Сторож:\s*/, ''))
-      else if (/^(Готово|Не получилось|Остановлено|Упёрся в лимит|Закончил)/.test(text))
-        open(text === 'Готово' ? 'end' : text === 'Остановлено' ? 'note' : 'error', ei, t, text)
-      else if (text)
+      }
+      else if (/^(Готово|Не получилось|Остановлено|Упёрся в лимит|Закончил)/.test(text)) {
+        open(text === 'Готово'
+          ? 'end'
+          : text === 'Остановлено'
+            ? 'note'
+            : 'error', ei, t, text)
+      }
+      else if (text) {
         open('note', ei, t, text)
+      }
     }
   })
 
@@ -162,7 +202,10 @@ export function buildSchema(events: any[], short: (p: string) => string) {
     if (b.kind === 'read' && b.steps.length <= 2 && a.kind === c.kind && ['edit', 'check'].includes(a.kind)) {
       a.steps.push(...b.steps, ...c.steps)
       a.errors += c.errors
-      for (const f of c.files) if (!a.files.includes(f)) a.files.push(f)
+      for (const f of c.files) {
+        if (!a.files.includes(f))
+          a.files.push(f)
+      }
       a.t1 = c.t1 ?? a.t1
       nodes.splice(i, 2)
       i--
@@ -173,14 +216,24 @@ export function buildSchema(events: any[], short: (p: string) => string) {
     if (!n.sub)
       n.sub = summary(n)
     const next = nodes[i + 1]
-    if (next?.t0 && n.t0 && (!n.t1 || n.t1 < next.t0) && ['read', 'edit', 'check', 'git', 'plan', 'agent'].includes(n.kind))
+    if (next?.t0 && n.t0 && (!n.t1 || n.t1 < next.t0) && [
+      'read',
+      'edit',
+      'check',
+      'git',
+      'plan',
+      'agent',
+    ].includes(n.kind)) {
       n.t1 = next.t0
+    }
   })
   const t0 = nodes.find(n => n.t0)?.t0
   const t1 = [...nodes].reverse().find(n => n.t1)?.t1
   return {
     nodes,
-    span: t0 && t1 ? t1 - t0 : 0,
+    span: t0 && t1
+      ? t1 - t0
+      : 0,
     edits: nodes.filter(n => n.kind === 'edit').reduce((a, n) => a + n.steps.length, 0),
     checks: nodes.filter(n => n.kind === 'check').reduce((a, n) => a + n.steps.length, 0),
     steps: nodes.reduce((a, n) => a + n.steps.length, 0),
@@ -194,5 +247,9 @@ export function dur(ms: number) {
   if (m < 60)
     return `${m} мин`
   const h = Math.floor(m / 60)
-  return h < 24 ? `${h} ч ${m % 60 ? `${m % 60} мин` : ''}`.trim() : `${Math.floor(h / 24)} д ${h % 24} ч`
+  return h < 24
+    ? `${h} ч ${m % 60
+        ? `${m % 60} мин`
+        : ''}`.trim()
+    : `${Math.floor(h / 24)} д ${h % 24} ч`
 }

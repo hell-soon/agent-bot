@@ -1,19 +1,19 @@
 <script setup lang="ts">
 import type { FeedItem } from '../lib/feed'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, triggerRef, watch } from 'vue'
+import { ls } from '../lib/api'
 import { companionOn } from '../lib/companion'
 import { buildFeed } from '../lib/feed'
 import { aiName, md, modKey, money, runTok, STATUS, tok, until } from '../lib/format'
 import { moodOf } from '../lib/mood'
 import { goHome, reply, resetRepo, runAction, selectedRun, store, toast } from '../lib/store'
+import { useAttach } from '../lib/upload'
+import AttachList from './AttachList.vue'
 import Companion from './Companion.vue'
 import FeatureBoard from './FeatureBoard.vue'
 import Icon from './Icon.vue'
 import PrSummary from './PrSummary.vue'
 import RunSchema from './RunSchema.vue'
-import { ls } from '../lib/api'
-import AttachList from './AttachList.vue'
-import { useAttach } from '../lib/upload'
 
 const r = selectedRun
 const events = shallowRef<any[]>([])
@@ -76,7 +76,9 @@ const feed = computed(() => buildFeed(events.value, short))
 async function jump(ei: number) {
   setTab('feed')
   await nextTick()
-  const el = [...document.querySelectorAll<HTMLElement>('.feed [data-ei]')].find(x => Number(x.dataset.ei) >= ei)
+  const el = [
+    ...document.querySelectorAll<HTMLElement>('.feed [data-ei]'),
+  ].find(x => Number(x.dataset.ei) >= ei)
   if (!el)
     return
   el.scrollIntoView({ block: 'center', behavior: 'smooth' })
@@ -116,7 +118,9 @@ function pick(it: Extract<FeedItem, { k: 'choice' }>, i: number) {
   if (it.answered || !canAnswer.value)
     return
   const cur = picks[it.key] || []
-  picks[it.key] = cur.includes(i) ? cur.filter(x => x !== i) : [...cur, i]
+  picks[it.key] = cur.includes(i)
+    ? cur.filter(x => x !== i)
+    : [...cur, i]
   curQ.value = it.key
 }
 function pickOnly(it: Extract<FeedItem, { k: 'choice' }>, i: number) {
@@ -1110,8 +1114,14 @@ function act(a: string) {
   animation: flash 1.6s ease-out;
 }
 @keyframes flash {
-  0%, 30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 10px; }
-  100% { box-shadow: 0 0 0 3px transparent; }
+  0%,
+  30% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);
+    border-radius: 10px;
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
 }
 // вложения: в ответе — строкой над полем, в ленте — справа, как реплика человека
 .reply-files {
@@ -1125,7 +1135,8 @@ function act(a: string) {
   align-self: flex-end;
   justify-content: flex-end;
   max-width: 80%;
-  &.bot { // файлы от бота — слева, крупнее
+  &.bot {
+    // файлы от бота — слева, крупнее
     justify-self: start;
     align-self: flex-start;
     justify-content: flex-start;

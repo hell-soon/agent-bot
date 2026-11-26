@@ -4,8 +4,20 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 export const VIEWPORTS = [
-  { id: 'phone', title: 'телефон', viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
-  { id: 'desktop', title: 'десктоп', viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 },
+  {
+    id: 'phone',
+    title: 'телефон',
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 2,
+    isMobile: true,
+    hasTouch: true,
+  },
+  {
+    id: 'desktop',
+    title: 'десктоп',
+    viewport: { width: 1280, height: 800 },
+    deviceScaleFactor: 1,
+  },
 ]
 
 // «a=b; c=d» → куки для хоста адреса
@@ -15,7 +27,14 @@ function cookiesFor(str, url) {
   const host = new URL(url).hostname
   return String(str).split(/;\s*/).map(p => p.trim()).filter(p => p.includes('=')).map((p) => {
     const i = p.indexOf('=')
-    return { name: p.slice(0, i).trim(), value: p.slice(i + 1).trim(), domain: host, path: '/', secure: url.startsWith('https'), sameSite: 'Lax' }
+    return {
+      name: p.slice(0, i).trim(),
+      value: p.slice(i + 1).trim(),
+      domain: host,
+      path: '/',
+      secure: url.startsWith('https'),
+      sameSite: 'Lax',
+    }
   })
 }
 
@@ -35,8 +54,15 @@ export async function shoot(shots, { cookie, bypass, outDir }) {
   const files = []
   try {
     for (const vp of VIEWPORTS) {
-      const headers = bypass ? { 'x-vercel-protection-bypass': bypass, 'x-vercel-set-bypass-cookie': 'samesitenone' } : {}
-      const ctx = await browser.newContext({ ...vp, extraHTTPHeaders: headers, locale: 'ru-RU', colorScheme: 'light' })
+      const headers = bypass
+        ? { 'x-vercel-protection-bypass': bypass, 'x-vercel-set-bypass-cookie': 'samesitenone' }
+        : {}
+      const ctx = await browser.newContext({
+        ...vp,
+        extraHTTPHeaders: headers,
+        locale: 'ru-RU',
+        colorScheme: 'light',
+      })
       for (const s of shots) {
         const page = await ctx.newPage()
         try {
@@ -49,7 +75,15 @@ export async function shoot(shots, { cookie, bypass, outDir }) {
           await page.screenshot({ path: file })
           files.push({ key: s.key, vp: vp.id, file, blocked })
         }
-        catch (e) { files.push({ key: s.key, vp: vp.id, file: '', blocked: '', error: e.message.split('\n')[0] }) }
+        catch (e) {
+          files.push({
+            key: s.key,
+            vp: vp.id,
+            file: '',
+            blocked: '',
+            error: e.message.split('\n')[0],
+          })
+        }
         finally { await page.close().catch(() => {}) }
       }
       await ctx.close()
@@ -73,19 +107,33 @@ export function pickRoutes(g, changed, sliceOf, manual) {
   const users = new Map()
   for (const e of g.edges) {
     const a = sliceOf(e.from, fsd); const b = sliceOf(e.to, fsd)
-    if (a !== b)
-      users.set(b, [...(users.get(b) || []), a])
+    if (a !== b) {
+      users.set(b, [
+        ...(users.get(b) || []),
+        a,
+      ])
+    }
   }
   let front = new Set(changed.map(f => sliceOf(f, fsd)))
   const seen = new Set(front)
   for (let i = 0; i < 3; i++) {
     const next = new Set()
-    for (const s of front) for (const u of users.get(s) || []) if (!seen.has(u)) { seen.add(u); next.add(u) }
+    for (const s of front) {
+      for (const u of users.get(s) || []) {
+        if (!seen.has(u)) { seen.add(u); next.add(u) }
+      }
+    }
     front = next
   }
   const prefix = `${fsd.root}${pagesLayer}/`
   const pages = [...seen].filter(s => s.startsWith(prefix)).map(s => s.slice(prefix.length)).filter(Boolean)
-  const routes = pages.map(p => (/^(home|main|index)$/.test(p) ? '/' : `/${p}`))
-  const uniq = [...new Set(routes)]
-  return (uniq.length ? uniq : ['/']).slice(0, 3)
+  const routes = pages.map(p => (/^(home|main|index)$/.test(p)
+    ? '/'
+    : `/${p}`))
+  const uniq = [
+    ...new Set(routes),
+  ]
+  return (uniq.length
+    ? uniq
+    : ['/']).slice(0, 3)
 }

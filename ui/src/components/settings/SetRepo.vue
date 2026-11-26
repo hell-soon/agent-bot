@@ -38,7 +38,12 @@ const docReviewSaving = ref(false)
 
 async function load() {
   const r = await api(`/api/repo-settings?repo=${encodeURIComponent(store.curRepo)}`)
-  Object.assign(s, { map: true, impact: true, fsd: true, screens: true }, r.settings, {
+  Object.assign(s, {
+    map: true,
+    impact: true,
+    fsd: true,
+    screens: true,
+  }, r.settings, {
     auto: {
       ...s.auto,
       ...(r.settings.auto || {}),

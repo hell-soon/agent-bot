@@ -8,7 +8,10 @@ import Limits from './Limits.vue'
 const showAll = ref(false)
 const groups = computed(() => {
   const day = startOfDay()
-  const active = [...repoRuns.value.filter(isActive), ...otherActive.value]
+  const active = [
+    ...repoRuns.value.filter(isActive),
+    ...otherActive.value,
+  ]
   const rest = repoRuns.value.filter(r => !isActive(r))
   const today = rest.filter(r => (r.endedAt || r.createdAt) >= day)
   const older = rest.filter(r => (r.endedAt || r.createdAt) < day)

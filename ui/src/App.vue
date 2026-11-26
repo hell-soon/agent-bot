@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted } from 'vue'
-import CommandPalette from './components/CommandPalette.vue'
 import ArchView from './components/ArchView.vue'
+import CommandPalette from './components/CommandPalette.vue'
 import GraphView from './components/GraphView.vue'
 import Home from './components/Home.vue'
 import Icon from './components/Icon.vue'

@@ -28,15 +28,15 @@ const ai = computed(() => (store.cfg.ai === 'codex'
   ? 'codex'
   : 'claude'))
 const TITLES: Record<DrawerPage, string> = {
-  main: 'Настройки',
-  repo: 'Репозиторий',
-  skills: 'Скиллы',
-  rules: 'Правила',
-  perms: 'Разрешения',
-  notify: 'Уведомления и сторож',
-  access: 'Доступ на GitHub',
+  'main': 'Настройки',
+  'repo': 'Репозиторий',
+  'skills': 'Скиллы',
+  'rules': 'Правила',
+  'perms': 'Разрешения',
+  'notify': 'Уведомления и сторож',
+  'access': 'Доступ на GitHub',
   'panel-update': 'Обновление панели',
-  memory: 'Память',
+  'memory': 'Память',
 }
 const repoName = computed(() => store.curRepo.split('/')[1] || '')
 

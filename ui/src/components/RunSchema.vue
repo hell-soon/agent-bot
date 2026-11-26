@@ -14,19 +14,31 @@ const s = computed(() => {
 const open = ref<Record<number, boolean>>({})
 const all = ref<Record<number, boolean>>({})
 
-const hm = (t?: number) => (t ? new Date(t).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' }) : '')
+function hm(t?: number) {
+  return t
+    ? new Date(t).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })
+    : ''
+}
 function when(n: SchemaNode) {
   if (!n.t0)
     return ''
   const long = n.t1 && n.t1 - n.t0 >= 60000
-  return long ? `${hm(n.t0)} – ${hm(n.t1)}` : hm(n.t0)
+  return long
+    ? `${hm(n.t0)} – ${hm(n.t1)}`
+    : hm(n.t0)
 }
-const length = (n: SchemaNode) => (n.t0 && n.t1 && n.t1 - n.t0 >= 60000 ? dur(n.t1 - n.t0) : '')
+function length(n: SchemaNode) {
+  return n.t0 && n.t1 && n.t1 - n.t0 >= 60000
+    ? dur(n.t1 - n.t0)
+    : ''
+}
 // пауза до следующего этапа — ожидание вашего ответа, лимит, перезапуск
 function gap(i: number) {
   const a = s.value.nodes[i]; const b = s.value.nodes[i + 1]
   const end = a?.t1 || a?.t0
-  return b?.t0 && end && b.t0 - end > 120000 ? dur(b.t0 - end) : ''
+  return b?.t0 && end && b.t0 - end > 120000
+    ? dur(b.t0 - end)
+    : ''
 }
 const big = (n: SchemaNode) => n.steps.length > 0
 </script>
@@ -220,17 +232,31 @@ const big = (n: SchemaNode) => n.steps.length > 0
       left: -18px;
     }
   }
-  &.edit { --k: var(--accent); }
-  &.check { --k: var(--warn); }
-  &.pr, &.end { --k: var(--ok); }
-  &.error { --k: var(--bad); }
-  &.ask, &.answer { --k: var(--accent); }
+  &.edit {
+    --k: var(--accent);
+  }
+  &.check {
+    --k: var(--warn);
+  }
+  &.pr,
+  &.end {
+    --k: var(--ok);
+  }
+  &.error {
+    --k: var(--bad);
+  }
+  &.ask,
+  &.answer {
+    --k: var(--accent);
+  }
   &.last .dot {
     animation: pulse 1.4s ease-in-out infinite;
   }
 }
 @keyframes pulse {
-  50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--k) 25%, transparent); }
+  50% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--k) 25%, transparent);
+  }
 }
 .card {
   background: var(--card);

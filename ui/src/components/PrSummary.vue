@@ -37,7 +37,7 @@ async function load(fresh = false) {
   catch { failed.value = true }
   // пока проверки идут — обновляем сами
   if (pr.value?.state === 'open' && pr.value.checks.some(c => c.state === 'run'))
-    timer = setTimeout(() => load(true), 30000)
+    timer = setTimeout(load, 30000, true)
 }
 watch(() => [props.run.id, props.run.prUrl, props.run.status], () => load(true), { immediate: true })
 onBeforeUnmount(() => clearTimeout(timer))
@@ -52,19 +52,43 @@ const sum = computed(() => {
 })
 const STATE = { open: 'Открыт', closed: 'Закрыт', merged: 'Слит' }
 const busy = computed(() => ['running', 'queued'].includes(props.run.status))
-const shown = computed(() => (allFiles.value ? pr.value?.files : pr.value?.files.slice(0, 8)) || [])
+const shown = computed(() => (allFiles.value
+  ? pr.value?.files
+  : pr.value?.files.slice(0, 8)) || [])
 
 async function fixFsd() {
   const list = (props.run.fsdNew || []).slice(0, 30).map((x: string) => `- ${x}`).join('\n')
-  try { await startJob({ kind: 'pr', pr: pr.value!.number, ai: props.run.ai, repo: props.run.repo || store.curRepo, text: `Исправь новые нарушения правил слоёв FSD, которые появились в этом PR (поведение не меняй; общий код — вниз по слоям, импорт чужого слайса — через его index):\n${list}` }) }
+  try {
+    await startJob({
+      kind: 'pr',
+      pr: pr.value!.number,
+      ai: props.run.ai,
+      repo: props.run.repo || store.curRepo,
+      text: `Исправь новые нарушения правил слоёв FSD, которые появились в этом PR (поведение не меняй; общий код — вниз по слоям, импорт чужого слайса — через его index):\n${list}`,
+    })
+  }
   catch (e: any) { toast(e.message) }
 }
 async function fix(text: '@ci' | '@conflicts') {
-  try { await startJob({ kind: 'pr', pr: pr.value!.number, text, ai: props.run.ai, repo: props.run.repo || store.curRepo }) }
+  try {
+    await startJob({
+      kind: 'pr',
+      pr: pr.value!.number,
+      text,
+      ai: props.run.ai,
+      repo: props.run.repo || store.curRepo,
+    })
+  }
   catch (e: any) { toast(e.message) }
 }
 function lineClass(l: string) {
-  return l.startsWith('@@') ? 'h' : l.startsWith('+') ? 'a' : l.startsWith('-') ? 'd' : ''
+  return l.startsWith('@@')
+    ? 'h'
+    : l.startsWith('+')
+      ? 'a'
+      : l.startsWith('-')
+        ? 'd'
+        : ''
 }
 </script>
 

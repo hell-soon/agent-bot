@@ -206,11 +206,23 @@ export function buildFeed(events: any[], short: (p: string) => string) {
         who: 'user',
         text: ev.text,
       })
-      if (ev.files?.length)
-        push({ k: 'files', key: key(), files: ev.files })
+      if (ev.files?.length) {
+        push({
+          k: 'files',
+          key: key(),
+          files: ev.files,
+        })
+      }
     }
     else if (ev.type === 'bot_files' && ev.files?.length) {
-      push({ k: 'files', key: key(), who: ev.from === 'bot' ? 'bot' : 'user', files: ev.files })
+      push({
+        k: 'files',
+        key: key(),
+        who: ev.from === 'bot'
+          ? 'bot'
+          : 'user',
+        files: ev.files,
+      })
     }
     else if (ev.type === 'bot_note') {
       if (!/^(Ждёт вашего ответа|Запуск|Готово)$/.test(ev.text)) {

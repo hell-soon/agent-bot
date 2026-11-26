@@ -81,7 +81,9 @@ const groups = computed(() => {
       icon: kindIcon(r.kind),
       dot: r.status,
       title: r.title,
-      hint: `${r.repo !== store.curRepo ? `${r.repo?.split('/')[1]} · ` : ''}${STATUS[r.status] || ''} · ${ago(r.endedAt || r.startedAt || r.createdAt)}`,
+      hint: `${r.repo !== store.curRepo
+        ? `${r.repo?.split('/')[1]} · `
+        : ''}${STATUS[r.status] || ''} · ${ago(r.endedAt || r.startedAt || r.createdAt)}`,
       run: go(() => select(r.id)),
     })))
   if (query) {
@@ -166,12 +168,14 @@ const groups = computed(() => {
       run: job({ kind: 'triage' }),
     },
     ...(bothAi.value
-      ? [{
-          icon: 'swap',
-          title: `Переключить на ${aiName(other)}`,
-          k: 'ии claude codex',
-          run: go(() => setAi(other)),
-        }]
+      ? [
+          {
+            icon: 'swap',
+            title: `Переключить на ${aiName(other)}`,
+            k: 'ии claude codex',
+            run: go(() => setAi(other)),
+          },
+        ]
       : []),
     {
       icon: 'arch',

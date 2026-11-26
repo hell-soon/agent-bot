@@ -6,9 +6,20 @@
 const CODE = /\.(?:[cm]?[jt]sx?|vue|svelte|py|go)$/
 // тесты и сборки — не устройство проекта
 const SKIP = /(?:^|\/)(?:node_modules|dist|build|\.output|\.nuxt|\.next|vendor|coverage|\.git|__pycache__|ios|android|e2e|tests?|__tests__|__mocks__|fixtures)\/|\.(?:test|spec|stories)\.[cm]?[jt]sx?$/
-const EXT = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.vue', '.svelte', '.d.ts', '.py']
+const EXT = [
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.vue',
+  '.svelte',
+  '.d.ts',
+  '.py',
+]
 
-const norm = (p) => {
+function norm(p) {
   const out = []
   for (const s of p.split('/')) {
     if (!s || s === '.')
@@ -30,8 +41,20 @@ export function codeGraph({ list, read, grep }) {
   const alias = [] // [префикс, папка]
   const nuxt = read('nuxt.config.ts') || read('nuxt.config.js')
   if (nuxt) {
-    const src = nuxt.match(/srcDir\s*:\s*['"]([^'"]+)['"]/)?.[1]?.replace(/^\.?\/?|\/$/g, '') ?? (set.has('app/app.vue') ? 'app' : '')
-    alias.push(['~~/', ''], ['@@/', ''], ['#shared/', 'shared/'], ['~/', src ? `${src}/` : ''], ['@/', src ? `${src}/` : ''])
+    const src = nuxt.match(/srcDir\s*:\s*['"]([^'"]+)['"]/)?.[1]?.replace(/^\.?\/?|\/$/g, '') ?? (set.has('app/app.vue')
+      ? 'app'
+      : '')
+    alias.push(['~~/', ''], ['@@/', ''], ['#shared/', 'shared/'], [
+      '~/',
+      src
+        ? `${src}/`
+        : '',
+    ], [
+      '@/',
+      src
+        ? `${src}/`
+        : '',
+    ])
   }
   for (const f of ['tsconfig.json', 'tsconfig.app.json', 'jsconfig.json']) {
     const t = read(f)
@@ -42,7 +65,12 @@ export function codeGraph({ list, read, grep }) {
       const base = (j.compilerOptions?.baseUrl || '.').replace(/^\.\/?/, '')
       for (const [k, v] of Object.entries(j.compilerOptions?.paths || {})) {
         const to = String(v?.[0] || '').replace(/\*$/, '').replace(/^\.\//, '')
-        alias.push([k.replace(/\*$/, ''), norm(`${base}/${to}`) + (to.endsWith('/') || !to ? '/' : '')])
+        alias.push([
+          k.replace(/\*$/, ''),
+          norm(`${base}/${to}`) + (to.endsWith('/') || !to
+            ? '/'
+            : ''),
+        ])
       }
     }
     catch {}
@@ -56,8 +84,9 @@ export function codeGraph({ list, read, grep }) {
 
   const resolveJs = (from, spec) => {
     let base = null
-    if (spec.startsWith('.'))
+    if (spec.startsWith('.')) {
       base = norm(`${dirOf(from)}/${spec}`)
+    }
     else {
       const a = alias.find(([p]) => spec === p.replace(/\/$/, '') || spec.startsWith(p))
       if (a)
@@ -65,7 +94,11 @@ export function codeGraph({ list, read, grep }) {
     }
     if (base === null)
       return null
-    for (const c of [base, ...EXT.map(e => base + e), ...EXT.map(e => `${base}/index${e}`)]) {
+    for (const c of [
+      base,
+      ...EXT.map(e => base + e),
+      ...EXT.map(e => `${base}/index${e}`),
+    ]) {
       if (set.has(c) && CODE.test(c))
         return c
     }
@@ -75,10 +108,20 @@ export function codeGraph({ list, read, grep }) {
     let parts
     if (mod.startsWith('.')) {
       const up = mod.match(/^\.+/)[0].length
-      parts = [...dirOf(from).split('/').slice(0, Math.max(0, dirOf(from).split('/').length - (up - 1))), ...mod.slice(up).split('.').filter(Boolean)]
+      parts = [
+        ...dirOf(from).split('/').slice(0, Math.max(0, dirOf(from).split('/').length - (up - 1))),
+        ...mod.slice(up).split('.').filter(Boolean),
+      ]
     }
-    else parts = mod.split('.')
-    for (const root of ['', 'src/', 'app/', `${dirOf(from).split('/')[0]}/`]) {
+    else {
+      parts = mod.split('.')
+    }
+    for (const root of [
+      '',
+      'src/',
+      'app/',
+      `${dirOf(from).split('/')[0]}/`,
+    ]) {
       const p = root + parts.join('/')
       if (set.has(`${p}.py`))
         return `${p}.py`
@@ -120,7 +163,17 @@ export function codeGraph({ list, read, grep }) {
 
   // ---------- FSD: папка, где лежат слои (src/, src/components/ …), слои — сверху вниз ----------
   // Варианты: стандартные имена или с номерами (00.shared … 06.app — больший номер выше), плюс kit, layouts, processes.
-  const RANK = { app: 0, processes: 0.5, pages: 1, layouts: 1.5, widgets: 2, features: 3, entities: 4, kit: 4.5, shared: 5 }
+  const RANK = {
+    app: 0,
+    processes: 0.5,
+    pages: 1,
+    layouts: 1.5,
+    widgets: 2,
+    features: 3,
+    entities: 4,
+    kit: 4.5,
+    shared: 5,
+  }
   const bare = d => d.replace(/^\d+[.\-_]/, '')
   const dirs = new Map() // папка → множество подпапок
   for (const f of files) {
@@ -134,9 +187,13 @@ export function codeGraph({ list, read, grep }) {
   for (const [root, kids] of dirs) {
     const ls = [...kids].filter(k => bare(k) in RANK)
     if (ls.length >= 4 && ls.length > layers.length) {
-      fsdRoot = root ? `${root}/` : ''
+      fsdRoot = root
+        ? `${root}/`
+        : ''
       const numbered = ls.every(k => /^\d+[.\-_]/.test(k))
-      layers = ls.sort((a, b) => (numbered ? Number.parseInt(b) - Number.parseInt(a) : RANK[bare(a)] - RANK[bare(b)]))
+      layers = ls.sort((a, b) => (numbered
+        ? Number.parseInt(b) - Number.parseInt(a)
+        : RANK[bare(a)] - RANK[bare(b)]))
     }
   }
   const fsd = fsdRoot !== undefined
@@ -145,7 +202,14 @@ export function codeGraph({ list, read, grep }) {
     if (!fsd || !f.startsWith(fsdRoot))
       return null
     const [l, slice] = f.slice(fsdRoot.length).split('/')
-    return layers.includes(l) ? { layer: l, slice: SEGMENTED.has(bare(l)) || !slice || slice.includes('.') ? '' : slice } : null
+    return layers.includes(l)
+      ? {
+          layer: l,
+          slice: SEGMENTED.has(bare(l)) || !slice || slice.includes('.')
+            ? ''
+            : slice,
+        }
+      : null
   }
   const why = (a, b) => {
     const A = layerOf(a); const B = layerOf(b)
@@ -166,8 +230,16 @@ export function codeGraph({ list, read, grep }) {
   }
 
   return {
-    fsd: fsd ? { root: fsdRoot, layers, segmented: layers.filter(l => SEGMENTED.has(bare(l))) } : null,
+    fsd: fsd
+      ? {
+          root: fsdRoot,
+          layers,
+          segmented: layers.filter(l => SEGMENTED.has(bare(l))),
+        }
+      : null,
     files,
-    edges: [...edges.values()].map(e => ({ ...e, bad: why(e.from, e.to) || undefined })),
+    edges: [
+      ...edges.values(),
+    ].map(e => ({ ...e, bad: why(e.from, e.to) || undefined })),
   }
 }

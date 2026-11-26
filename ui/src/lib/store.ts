@@ -113,7 +113,12 @@ store.compose.showMore = !!MODES[store.compose.mode].more
 
 // История текущего проекта; чужие — только идущие сейчас (очередь общая)
 export const repoRuns = computed(() => store.runs.filter(r => r.repo === store.curRepo))
-export const otherActive = computed(() => store.runs.filter(r => r.repo !== store.curRepo && ['queued', 'running', 'waiting', 'limited'].includes(r.status)))
+export const otherActive = computed(() => store.runs.filter(r => r.repo !== store.curRepo && [
+  'queued',
+  'running',
+  'waiting',
+  'limited',
+].includes(r.status)))
 
 // Оба ИИ установлены — тогда есть выбор (иначе переключатели не показываем)
 export const bothAi = computed(() => store.ais.claude && store.ais.codex)
@@ -289,7 +294,12 @@ export function setRepo(r: string) {
 function browserNotify(d: { title: string, body: string, detail?: string, run: string }) {
   if (!('Notification' in window) || Notification.permission !== 'granted' || document.visibilityState === 'visible')
     return
-  const n = new Notification(d.title, { body: d.detail ? `${d.body}\n${d.detail}` : d.body, tag: `bot-${d.run}` })
+  const n = new Notification(d.title, {
+    body: d.detail
+      ? `${d.body}\n${d.detail}`
+      : d.body,
+    tag: `bot-${d.run}`,
+  })
   n.onclick = () => { window.focus(); select(d.run); n.close() }
 }
 

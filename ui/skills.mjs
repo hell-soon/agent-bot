@@ -12,7 +12,7 @@ const CONFIG = path.join(BOT, 'config.json')
 const INSTALLED = path.join(BOT, 'skills') // установленные из GitHub: skills/<owner>__<repo>/
 const BUILD = path.join(BOT, '.skills') // собранный плагин для Claude Code
 
-const readConfig = () => {
+function readConfig() {
   try { return JSON.parse(fs.readFileSync(CONFIG, 'utf8')) }
   catch { return {} }
 }
@@ -22,7 +22,9 @@ function mattpocockDir() {
   const base = path.join(os.homedir(), '.claude/plugins/cache/claude-plugins-official/mattpocock-skills')
   try {
     const v = fs.readdirSync(base).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).pop()
-    return v ? path.join(base, v) : null
+    return v
+      ? path.join(base, v)
+      : null
   }
   catch { return null }
 }
@@ -59,25 +61,53 @@ function parseSkill(file) {
     }
   }
   const name = fm.name || path.basename(path.dirname(file))
-  return { name, description: fm.description || '', manual: fm['disable-model-invocation'] === 'true', dir: path.dirname(file), file }
+  return {
+    name,
+    description: fm.description || '',
+    manual: fm['disable-model-invocation'] === 'true',
+    dir: path.dirname(file),
+    file,
+  }
 }
 
 // Источники: встроенный (mattpocock), установленные из GitHub, скиллы самого репозитория (только показ)
 export function listSources(repoWork) {
   const out = []
   const mp = mattpocockDir()
-  if (mp)
-    out.push({ id: 'mattpocock', label: 'mattpocock/skills', kind: 'builtin', dir: path.join(mp, 'skills'), url: 'https://github.com/mattpocock/skills' })
+  if (mp) {
+    out.push({
+      id: 'mattpocock',
+      label: 'mattpocock/skills',
+      kind: 'builtin',
+      dir: path.join(mp, 'skills'),
+      url: 'https://github.com/mattpocock/skills',
+    })
+  }
   try {
     for (const d of fs.readdirSync(INSTALLED).sort()) {
       const dir = path.join(INSTALLED, d)
-      if (fs.statSync(dir).isDirectory())
-        out.push({ id: `gh:${d}`, label: d.replace('__', '/'), kind: 'github', dir, url: `https://github.com/${d.replace('__', '/')}`, removable: true })
+      if (fs.statSync(dir).isDirectory()) {
+        out.push({
+          id: `gh:${d}`,
+          label: d.replace('__', '/'),
+          kind: 'github',
+          dir,
+          url: `https://github.com/${d.replace('__', '/')}`,
+          removable: true,
+        })
+      }
     }
   }
   catch {}
-  if (repoWork && fs.existsSync(path.join(repoWork, '.claude/skills')))
-    out.push({ id: 'repo', label: 'в репозитории (.claude/skills)', kind: 'repo', dir: path.join(repoWork, '.claude/skills'), readonly: true })
+  if (repoWork && fs.existsSync(path.join(repoWork, '.claude/skills'))) {
+    out.push({
+      id: 'repo',
+      label: 'в репозитории (.claude/skills)',
+      kind: 'repo',
+      dir: path.join(repoWork, '.claude/skills'),
+      readonly: true,
+    })
+  }
   return out
 }
 
@@ -89,7 +119,15 @@ export function listSkills(repoWork) {
       const sk = parseSkill(f)
       const id = `${s.id}/${sk.name}`
       const group = path.relative(s.dir, path.dirname(sk.dir)).split(path.sep)[0] || ''
-      skills.push({ ...sk, id, source: s.id, sourceLabel: s.label, group, enabled: s.kind === 'repo' || !off.has(id), readonly: !!s.readonly })
+      skills.push({
+        ...sk,
+        id,
+        source: s.id,
+        sourceLabel: s.label,
+        group,
+        enabled: s.kind === 'repo' || !off.has(id),
+        readonly: !!s.readonly,
+      })
     }
   }
   return skills
@@ -108,17 +146,27 @@ export function build() {
     if (seen.has(s.name))
       continue
     seen.add(s.name)
-    fs.cpSync(s.dir, path.join(BUILD, 'skills', s.name), { recursive: true, dereference: true, filter: src => !/node_modules|\.git(\/|$)/.test(src) })
+    fs.cpSync(s.dir, path.join(BUILD, 'skills', s.name), {
+      recursive: true,
+      dereference: true,
+      filter: src => !/node_modules|\.git(\/|$)/.test(src),
+    })
   }
   return seen.size
 }
 
-const git = (args, cwd) => new Promise((resolve, reject) => execFile('git', args, { cwd, timeout: 120000 }, (e, out, err) => (e ? reject(new Error(String(err || e.message).trim().split('\n').pop())) : resolve(out))))
+function git(args, cwd) {
+  return new Promise((resolve, reject) => execFile('git', args, { cwd, timeout: 120000 }, (e, out, err) => (e
+    ? reject(new Error(String(err || e.message).trim().split('\n').pop()))
+    : resolve(out))))
+}
 
 // «owner/repo», «https://github.com/owner/repo(.git)», «…/tree/ветка/…» → owner/repo
 export function parseSpec(spec) {
   const m = String(spec || '').trim().match(/^(?:https?:\/\/github\.com\/)?([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\/.*)?$/)
-  return m ? `${m[1]}/${m[2]}` : null
+  return m
+    ? `${m[1]}/${m[2]}`
+    : null
 }
 
 export async function install(spec) {
@@ -129,7 +177,14 @@ export async function install(spec) {
   if (fs.existsSync(dir))
     throw new Error('Уже установлено — можно обновить')
   fs.mkdirSync(INSTALLED, { recursive: true })
-  await git(['clone', '-q', '--depth', '1', `https://github.com/${repo}.git`, dir])
+  await git([
+    'clone',
+    '-q',
+    '--depth',
+    '1',
+    `https://github.com/${repo}.git`,
+    dir,
+  ])
   const n = findSkillFiles(dir).length
   if (!n) {
     fs.rmSync(dir, { recursive: true, force: true })

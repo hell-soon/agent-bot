@@ -15,7 +15,9 @@ const WATCH = [
   ['watchRepeat', 'Повторов подряд', 'одна и та же команда или чтение без правок между ними'],
 ] as const
 
-const perm = ref(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission)
+const perm = ref(typeof Notification === 'undefined'
+  ? 'unsupported'
+  : Notification.permission)
 async function askPerm() {
   perm.value = await Notification.requestPermission()
   if (perm.value === 'granted')
@@ -30,8 +32,12 @@ async function tgDo(b: Record<string, unknown>, ok?: string) {
   busy.value = true
   try {
     const r = await api('/api/telegram', b)
-    if ('set' in r)
-      tg.value = { ...tg.value, ...r }
+    if ('set' in r) {
+      tg.value = {
+        ...tg.value,
+        ...r,
+      }
+    }
     store.cfg.tgChat = tg.value.chat || ''
     tgIn.value = ''
     if (ok)
@@ -42,7 +48,12 @@ async function tgDo(b: Record<string, unknown>, ok?: string) {
 }
 const on = (k: string) => (store.cfg.notifyOn || {})[k] !== false
 function setOn(k: string, v: boolean) {
-  saveSetting('notifyOn', { done: on('done'), waiting: on('waiting'), failed: on('failed'), [k]: v })
+  saveSetting('notifyOn', {
+    done: on('done'),
+    waiting: on('waiting'),
+    failed: on('failed'),
+    [k]: v,
+  })
 }
 function setNum(k: string, e: Event) {
   const v = Number((e.target as HTMLInputElement).value)

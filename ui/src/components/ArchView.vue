@@ -35,10 +35,17 @@ async function load(fresh = false) {
 onMounted(() => load())
 watch(() => store.curRepo, () => { viewId.value = 'all'; focus.value = null; load() })
 
-const arch = computed<Arch | null>(() => (d.value ? (useScan.value ? d.value.scan : d.value.saved) : null))
+const arch = computed<Arch | null>(() => (d.value
+  ? (useScan.value ? d.value.scan : d.value.saved)
+  : null))
 const views = computed<AView[]>(() => {
   const v = arch.value?.views || []
-  return v.some(x => x.id === 'all') ? v : [{ id: 'all', title: 'Общая карта' }, ...v]
+  return v.some(x => x.id === 'all')
+    ? v
+    : [
+        { id: 'all', title: 'Общая карта' },
+        ...v,
+      ]
 })
 const view = computed(() => views.value.find(v => v.id === viewId.value) || views.value[0])
 
@@ -58,7 +65,10 @@ const shown = computed(() => {
   else if (v?.kinds?.length) {
     const core = new Set(a.nodes.filter(n => v.kinds!.includes(n.kind)).map(n => n.id))
     edges = edges.filter(e => core.has(e.from) || core.has(e.to))
-    ids = new Set([...core, ...edges.flatMap(e => [e.from, e.to])])
+    ids = new Set([
+      ...core,
+      ...edges.flatMap(e => [e.from, e.to]),
+    ])
   }
   else if (v?.nodes?.length) {
     ids = new Set(v.nodes)
@@ -67,7 +77,10 @@ const shown = computed(() => {
   else {
     ids = new Set(a.nodes.map(n => n.id))
   }
-  return { nodes: a.nodes.filter(n => ids.has(n.id)), edges }
+  return {
+    nodes: a.nodes.filter(n => ids.has(n.id)),
+    edges,
+  }
 })
 
 // ---------- раскладка: колонки, порядок по соседям слева (меньше пересечений) ----------
@@ -75,22 +88,49 @@ const W = 250; const H = 54; const GX = 160; const GY = 18; const PAD = 28; cons
 const layout = computed(() => {
   const a = arch.value
   const pos = new Map<string, { x: number, y: number, col: number }>()
-  if (!a)
-    return { pos, cols: [] as { title: string, x: number }[], w: 0, h: 0 }
-  const order = [...a.columns.map(c => c.id), ...new Set(shown.value.nodes.map(n => n.column).filter(c => !a.columns.some(x => x.id === c)))]
-  const cols = order.map(id => ({ id, title: a.columns.find(c => c.id === id)?.title || id, nodes: shown.value.nodes.filter(n => n.column === id) })).filter(c => c.nodes.length)
+  if (!a) {
+    return {
+      pos,
+      cols: [] as { title: string, x: number }[],
+      w: 0,
+      h: 0,
+    }
+  }
+  const order = [
+    ...a.columns.map(c => c.id),
+    ...new Set(shown.value.nodes.map(n => n.column).filter(c => !a.columns.some(x => x.id === c))),
+  ]
+  const cols = order.map(id => ({
+    id,
+    title: a.columns.find(c => c.id === id)?.title || id,
+    nodes: shown.value.nodes.filter(n => n.column === id),
+  })).filter(c => c.nodes.length)
   const nb = new Map<string, string[]>()
   for (const e of shown.value.edges) {
-    nb.set(e.from, [...(nb.get(e.from) || []), e.to]); nb.set(e.to, [...(nb.get(e.to) || []), e.from])
+    nb.set(e.from, [
+      ...(nb.get(e.from) || []),
+      e.to,
+    ]); nb.set(e.to, [
+      ...(nb.get(e.to) || []),
+      e.from,
+    ])
   }
   const rank = new Map<string, number>()
   cols.forEach((c, ci) => {
     if (ci > 0) {
       const score = (n: ANode) => {
         const r = (nb.get(n.id) || []).map(x => rank.get(x)).filter((x): x is number => x !== undefined)
-        return r.length ? r.reduce((s, x) => s + x, 0) / r.length : Number.POSITIVE_INFINITY
+        return r.length
+          ? r.reduce((s, x) => s + x, 0) / r.length
+          : Number.POSITIVE_INFINITY
       }
-      c.nodes = c.nodes.map((n, i) => ({ n, s: score(n), i })).sort((p, q) => (p.s === q.s ? p.i - q.i : p.s - q.s)).map(x => x.n)
+      c.nodes = c.nodes.map((n, i) => ({
+        n,
+        s: score(n),
+        i,
+      })).sort((p, q) => (p.s === q.s
+        ? p.i - q.i
+        : p.s - q.s)).map(x => x.n)
     }
     c.nodes.forEach((n, i) => rank.set(n.id, i / Math.max(1, c.nodes.length - 1)))
   })
@@ -119,8 +159,14 @@ function path(e: AEdge) {
     return `M${x},${ay} C${x + 60},${ay} ${x + 60},${by} ${x},${by}`
   }
   const fwd = a.col < b.col
-  const x1 = fwd ? a.x + W : a.x; const x2 = fwd ? b.x : b.x + W
-  const dx = Math.max(50, Math.abs(x2 - x1) / 2) * (fwd ? 1 : -1)
+  const x1 = fwd
+    ? a.x + W
+    : a.x; const x2 = fwd
+    ? b.x
+    : b.x + W
+  const dx = Math.max(50, Math.abs(x2 - x1) / 2) * (fwd
+    ? 1
+    : -1)
   return `M${x1},${ay} C${x1 + dx},${ay} ${x2 - dx},${by} ${x2},${by}`
 }
 
@@ -130,11 +176,26 @@ const near = computed(() => {
   const id = active.value
   if (!id)
     return null
-  return new Set([id, ...shown.value.edges.flatMap(e => (e.from === id ? [e.to] : e.to === id ? [e.from] : []))])
+  return new Set([
+    id,
+    ...shown.value.edges.flatMap(e => (e.from === id
+      ? [e.to]
+      : e.to === id
+        ? [e.from]
+        : [])),
+  ])
 })
 const hit = (n: ANode) => !q.value || `${n.label} ${n.sub || ''}`.toLowerCase().includes(q.value.toLowerCase())
-const dimNode = (n: ANode) => (near.value ? !near.value.has(n.id) : !hit(n))
-const dimEdge = (e: AEdge) => (active.value ? e.from !== active.value && e.to !== active.value : !!q.value)
+function dimNode(n: ANode) {
+  return near.value
+    ? !near.value.has(n.id)
+    : !hit(n)
+}
+function dimEdge(e: AEdge) {
+  return active.value
+    ? e.from !== active.value && e.to !== active.value
+    : !!q.value
+}
 
 const EDGE: Record<string, { label: string, color: string }> = {
   http: { label: 'HTTP', color: 'hsl(218 85% 66%)' },
@@ -171,13 +232,18 @@ function onWheel(e: WheelEvent) {
 }
 // при открытии и смене вида — вписать по ширине (не крупнее 100%)
 const canvas = ref<HTMLElement>()
-watch(() => [layout.value.w, mode.value, viewId.value, useScan.value], async () => {
+watch(() => [
+  layout.value.w,
+  mode.value,
+  viewId.value,
+  useScan.value,
+], async () => {
   await nextTick()
   const w = canvas.value?.clientWidth
   if (w && layout.value.w)
     zoom.value = Math.max(0.4, Math.min(1, +((w - 16) / layout.value.w).toFixed(2)))
 })
-const step = (k: number) => { zoom.value = Math.min(2, Math.max(0.4, +(zoom.value + k).toFixed(2))) }
+function step(k: number) { zoom.value = Math.min(2, Math.max(0.4, +(zoom.value + k).toFixed(2))) }
 
 const busy = ref(false)
 async function aiUpdate() {
@@ -378,7 +444,7 @@ async function aiUpdate() {
               :key="n.id"
               class="node"
               :class="{ dim: dimNode(n), sel: focus === n.id }"
-              :style="{ left: `${layout.pos.get(n.id)?.x}px`, top: `${layout.pos.get(n.id)?.y}px`, width: `${W}px`, height: `${H}px`, '--k': kindColor(n.kind) }"
+              :style="{ 'left': `${layout.pos.get(n.id)?.x}px`, 'top': `${layout.pos.get(n.id)?.y}px`, 'width': `${W}px`, 'height': `${H}px`, '--k': kindColor(n.kind) }"
               @click="focus = focus === n.id ? null : n.id"
               @mouseenter="hover = n.id"
               @mouseleave="hover = null"
@@ -640,7 +706,9 @@ async function aiUpdate() {
   background: var(--card);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   cursor: pointer;
-  transition: opacity 0.15s, box-shadow 0.15s;
+  transition:
+    opacity 0.15s,
+    box-shadow 0.15s;
   &::before {
     content: '';
     position: absolute;

@@ -35,7 +35,9 @@ const thinking = computed(() => ['running', 'queued'].includes(props.run.status)
 const expanded = ref(false)
 const boardError = ref('')
 function reportError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = error instanceof Error
+    ? error.message
+    : String(error)
   if (expanded.value)
     boardError.value = message
   else
