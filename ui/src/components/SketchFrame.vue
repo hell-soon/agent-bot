@@ -9,6 +9,7 @@ export interface Mark { id: string, on: string, pts: [number, number][] }
 
 const props = defineProps<{
   sketch: Sketch
+  scale: number
   head: number // высота заголовка над телом рамки
   marks: Mark[]
   steps: { id: string, title: string }[]
@@ -34,9 +35,13 @@ function track(e: PointerEvent, key: string, start: { x: number, y: number, w: n
   e.preventDefault()
   stop()
   const ox = e.clientX; const oy = e.clientY
+  const scale = props.scale
   let moved = false
   const move = (ev: PointerEvent) => {
-    const dx = ev.clientX - ox; const dy = ev.clientY - oy
+    if (ev.pointerId !== e.pointerId)
+      return
+    const dx = (ev.clientX - ox) / scale
+    const dy = (ev.clientY - oy) / scale
     if (!moved && Math.abs(dx) + Math.abs(dy) < 3)
       return
     moved = true
@@ -45,6 +50,8 @@ function track(e: PointerEvent, key: string, start: { x: number, y: number, w: n
       emit('moving', { x: live.x, y: live.y })
   }
   const up = async (ev: PointerEvent) => {
+    if (ev.pointerId !== e.pointerId)
+      return
     stop()
     if (moved && ev.type !== 'pointercancel')
       await done() // до ответа сервера рамка остаётся там, куда её отпустили

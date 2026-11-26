@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { FeedItem } from '../lib/feed'
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, triggerRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, triggerRef, watch } from 'vue'
 import { companionOn } from '../lib/companion'
 import { buildFeed } from '../lib/feed'
 import { aiName, md, modKey, money, runTok, STATUS, tok, until } from '../lib/format'
@@ -19,9 +19,28 @@ const r = selectedRun
 const events = shallowRef<any[]>([])
 let es: EventSource | null = null
 let replaying = true
+type Tab = 'feed' | 'schema' | 'plan'
+const tab = ref<Tab>(ls.get('bot:tab') === 'schema'
+  ? 'schema'
+  : 'feed')
+function setTab(t: Tab) {
+  tab.value = t
+  if (t !== 'plan')
+    ls.set('bot:tab', t)
+}
+watch(
+  () => Boolean(r.value?.pause),
+  (pause) => {
+    if (pause && r.value?.kind === 'feature')
+      setTab('plan')
+  },
+)
+
 const scroller = () => document.getElementById('scroll')
 function nearBottom() { const s = scroller(); return !s || s.scrollTop + s.clientHeight > s.scrollHeight - 160 }
 function toBottom() {
+  if (tab.value === 'plan')
+    return
   const s = scroller(); if (s)
     s.scrollTop = s.scrollHeight
 }
@@ -53,9 +72,6 @@ function short(p: string) {
   return p
 }
 const feed = computed(() => buildFeed(events.value, short))
-// Вкладки: лента или схема (запоминаем выбор)
-const tab = ref<'feed' | 'schema'>(ls.get('bot:tab') === 'schema' ? 'schema' : 'feed')
-function setTab(t: 'feed' | 'schema') { tab.value = t; ls.set('bot:tab', t) }
 // из схемы — к месту в ленте: первый пункт ленты с этим или следующим событием, с подсветкой
 async function jump(ei: number) {
   setTab('feed')
@@ -225,6 +241,7 @@ function act(a: string) {
   <div
     v-if="r"
     class="rv"
+    :class="{ 'plan-view': tab === 'plan' }"
   >
     <div class="col">
       <header class="head">
@@ -299,13 +316,26 @@ function act(a: string) {
           >
             Схема
           </button>
+          <button
+            v-if="r.kind === 'feature'"
+            :class="{ on: tab === 'plan' }"
+            @click="setTab('plan')"
+          >
+            План<span
+              v-if="r.pause"
+              aria-label="Вопрос бота"
+            > ·</span>
+          </button>
         </div>
       </header>
 
-      <feature-board
+      <div
         v-if="r.kind === 'feature'"
-        :run="r"
-      />
+        v-show="tab === 'plan'"
+        class="plan-panel"
+      >
+        <feature-board :run="r" />
+      </div>
       <run-schema
         v-if="tab === 'schema'"
         :events="events"
@@ -315,7 +345,7 @@ function act(a: string) {
         @jump="jump"
       />
       <div
-        v-else
+        v-else-if="tab === 'feed'"
         class="feed"
       >
         <template
@@ -439,12 +469,15 @@ function act(a: string) {
       </div>
 
       <pr-summary
-        v-if="r.prUrl || (r.kind === 'pr' && r.pr)"
+        v-if="tab !== 'plan' && (r.prUrl || (r.kind === 'pr' && r.pr))"
         :key="r.id"
         :run="r"
       />
 
-      <div class="dock">
+      <div
+        v-show="tab !== 'plan'"
+        class="dock"
+      >
         <div
           v-if="r.status === 'running'"
           class="typing"
@@ -498,12 +531,15 @@ function act(a: string) {
     </div>
 
     <companion
-      v-if="companionOn"
+      v-if="companionOn && tab !== 'plan'"
       :mood="mood"
       :ai="aiName(ai)"
     />
 
-    <aside class="side">
+    <aside
+      v-show="tab !== 'plan'"
+      class="side"
+    >
       <div class="card">
         <dl class="kv">
           <dt>ИИ</dt><dd>
@@ -1048,6 +1084,22 @@ function act(a: string) {
     padding-left: 0;
     margin-left: 0;
   }
+}
+.rv.plan-view {
+  grid-template-columns: minmax(0, 1fr);
+  width: calc(100% - 24px);
+  .col {
+    height: calc(100dvh - 52px);
+    min-height: 0;
+  }
+  .head {
+    flex: none;
+  }
+}
+.plan-panel {
+  flex: 1;
+  min-height: 0;
+  display: grid;
 }
 .tabs {
   justify-self: start;
