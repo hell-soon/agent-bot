@@ -5,7 +5,7 @@
 
 export const SHAPES = ['rect', 'text', 'button']
 export const SKETCH_HEAD = 26 // высота заголовка рамки над телом эскиза — в пикселях доски
-const MAX_SKETCHES = 12
+export const MAX_SKETCHES = 12
 const MAX_SHAPES = 60
 const MAX_MARKS = 200
 const MAX_POINTS = 400

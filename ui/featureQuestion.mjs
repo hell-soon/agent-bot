@@ -4,9 +4,8 @@
 // Чистые функции без ввода-вывода: сервер хранит паузу в run.pause, доску — в run.board.
 
 import { planSections, QUESTION_HELP } from './featurePlan.mjs'
-import { mergeSketches, parseSketches } from './featureSketch.mjs'
+import { MAX_SKETCHES, mergeSketches, parseSketches } from './featureSketch.mjs'
 
-const MAX_SKETCHES = 12 // как в featureSketch.mjs: больше эскизов на доску не кладём
 const clip = (s, n) => String(s ?? '').trim().slice(0, n)
 const clone = b => JSON.parse(JSON.stringify(b))
 
@@ -84,7 +83,7 @@ export function resumeText(board, pause, answer) {
         ]
       : ['План не менялся.']),
     '',
-    'Сначала вернись в свою ветку (git checkout <ветка>); если последний коммит в ней — «WIP бота: …», сними его (git reset --soft HEAD~1) и продолжай с того же места. Дальше — как раньше: проверки, коммит, push и PR.',
+    `Сначала вернись в свою ветку (git checkout ${pause.branch || '<твоя ветка>'}); если последний коммит в ней — «WIP бота: …», сними его (git reset --soft HEAD~1) и продолжай с того же места. Дальше — как раньше: проверки, коммит, push и PR.`,
     '',
     QUESTION_HELP,
   ].join('\n')

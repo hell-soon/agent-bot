@@ -396,11 +396,10 @@ const askedStep = computed(() => {
   const id = props.run.pause?.step
   return board.value.items.find(i => !!id && i.id === id)
 })
+const isAsked = (id: string) => paused.value && askedStep.value?.id === id
 const resumeBlocker = computed(() => thinking.value
   ? 'Бот заканчивает ход — сейчас можно будет продолжить'
-  : board.value.suggestions.length
-    ? 'Сначала примите или отклоните предложения бота'
-    : '')
+  : '')
 const cleanOption = (l: string) => l.replace(/\s*\((?:рекомендую|рекомендуется|recommended)\)/i, '')
 // клик по варианту — он становится ответом (повторный клик снимает)
 function pickOption(o: string) {
@@ -681,7 +680,7 @@ const SUG_TEXT: Record<string, string> = {
             del: sugFor.get(c.it.id)?.kind === 'remove',
             chg: sugFor.get(c.it.id)?.kind === 'edit',
             dragging: drag.id === c.it.id,
-            asked: paused && askedStep?.id === c.it.id,
+            asked: isAsked(c.it.id),
           }]"
           :data-step="c.it.type === 'step' && !c.add ? c.it.id : undefined"
           :style="{ left: `${posOf(c.it).x}px`, top: `${posOf(c.it).y}px`, width: `${W}px` }"
@@ -720,7 +719,7 @@ const SUG_TEXT: Record<string, string> = {
             <div class="head">
               <span class="kind">{{ c.it.type === 'step' ? 'шаг' : 'заметка' }}{{ c.it.by === 'user' ? ' · ваш' : '' }}</span>
               <span
-                v-if="paused && askedStep?.id === c.it.id"
+                v-if="isAsked(c.it.id)"
                 class="tag wait"
                 :title="run.pause.text"
               >вопрос бота</span>

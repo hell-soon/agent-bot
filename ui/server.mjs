@@ -422,6 +422,15 @@ const CHAT = new Set([
 let current = null // { run, child }
 // «Разработка фичи» до «Начать работу»: бот только планирует, код не меняет
 const planning = run => run.kind === 'feature' && !run.planApproved
+// Ответ на вопрос бота (run.pause) — «Продолжить работу», ответ в ленте или «Продолжить»: тот же запуск с ответом и доской.
+// Возвращает текст ошибки или '' (тогда run.reply готов, пауза снята; поставить в очередь — вызывающему)
+function resumePaused(run, answer) {
+  if (!run.sessionId || ['running', 'queued'].includes(run.status))
+    return 'Дождитесь, пока бот закончит ход'
+  run.reply = resumeText(run.board, run.pause, answer)
+  run.pause = undefined
+  return ''
+}
 
 function newRun(fields) {
   const run = {
@@ -917,12 +926,21 @@ function next() {
       })
     }
     run.endedAt = Date.now(); run.liveIn = run.liveOut = undefined
+    // вопрос фичи держит паузу, только если ход закончился нормально (сбой, лимит, остановка — обычное «Продолжить»)
+    if (run.pause && run.status !== 'waiting')
+      run.pause = undefined
     // остановлен или ждёт ответа на вопрос фичи: незаконченное — WIP-коммитом в ветку, копия свободна для других задач
     if (run.status === 'stopped' || run.pause) {
       wiping = true
       execFile(AGENT, ['_wip'], {
         env: { ...ENV, BOT_REPO: run.repo || repoOf() },
-      }, () => { wiping = false; next() })
+      }, (_err, out) => {
+        const br = String(out || '').trim().split('\n').pop()
+        if (run.pause && br)
+          run.pause.branch = br // ветка, в которую бот вернётся после ответа
+        wiping = false
+        next()
+      })
     }
     appendEvent(run, {
       type: 'bot_note',
@@ -2247,13 +2265,10 @@ ${ARCH_FORMAT}`,
     if (bm[2] === 'resume') {
       if (!run.pause)
         return json(res, { error: 'Бот ни о чём не спрашивал' }, 409)
-      if (!run.sessionId || ['running', 'queued'].includes(run.status))
-        return json(res, { error: 'Дождитесь, пока бот закончит ход' }, 409)
-      if (run.board?.suggestions?.length)
-        return json(res, { error: 'Сначала примите или отклоните предложения бота' }, 400)
-      const b = await body(req)
-      run.reply = resumeText(run.board, run.pause, b.answer)
-      run.pause = undefined; run.status = 'queued'
+      const err = resumePaused(run, (await body(req)).answer)
+      if (err)
+        return json(res, { error: err }, 409)
+      run.status = 'queued'
       pushState(); next()
       return json(res, { ok: true })
     }
@@ -2288,13 +2303,21 @@ ${ARCH_FORMAT}`,
       const files = pickFiles(b.files)
       if (!run.sessionId || (!b.text && !files.length))
         return json(res, { error: 'Нечего продолжать' }, 400)
-      run.reply = b.text || 'Посмотри вложения.'; run.replyFiles = files.length ? files : undefined; run.status = 'queued'
+      let text = b.text || 'Посмотри вложения.'
       // вопрос из карточки доски — с привязкой к шагу
       const item = b.step && b.text && run.board?.items?.find(i => i.id === b.step)
       if (item)
-        run.reply = `Про ${item.type === 'note' ? 'заметку' : 'шаг'} «${item.title || item.text.slice(0, 60)}» (id ${item.id}): ${b.text}`
+        text = `Про ${item.type === 'note' ? 'заметку' : 'шаг'} «${item.title || item.text.slice(0, 60)}» (id ${item.id}): ${b.text}`
       // бот ждёт ответа на вопрос фичи: ответ в ленте — тоже «Продолжить работу» (с вопросом и обновлённым планом)
-      if (run.pause) { run.reply = resumeText(run.board, run.pause, run.reply); run.pause = undefined }
+      if (run.pause) {
+        const err = resumePaused(run, text)
+        if (err)
+          return json(res, { error: err }, 409)
+      }
+      else {
+        run.reply = text
+      }
+      run.replyFiles = files.length ? files : undefined; run.status = 'queued'
     }
     else if (act === 'stop') {
       if (current?.run === run) {
@@ -2311,8 +2334,7 @@ ${ARCH_FORMAT}`,
     else if (act === 'continue') {
       if (!run.sessionId)
         return json(res, { error: 'Нечего продолжать — нет сессии' }, 400)
-      if (run.pause) { run.reply = resumeText(run.board, run.pause, ''); run.pause = undefined }
-      else if (CHAT.has(run.kind) && !run.branch)
+      if (CHAT.has(run.kind) && !run.branch)
         run.reply = 'Продолжай с того места, где остановился.'
       else run.continue = true
       run.status = 'queued'

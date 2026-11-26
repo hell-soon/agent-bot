@@ -113,6 +113,8 @@ it('resume text carries the answer and says the plan did not change', () => {
   assert.match(t, /План не менялся/)
   assert.doesNotMatch(t, /## Актуальный план/)
   assert.match(t, /WIP бота/)
+  assert.match(t, /git checkout <твоя ветка>/)
+  assert.match(resumeText(b, { ...pause, branch: 'agent/menu' }, 'Да'), /git checkout agent\/menu\)/)
 })
 
 it('resume text sends the updated plan when the person edited the board', () => {

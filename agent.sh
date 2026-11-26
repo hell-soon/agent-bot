@@ -503,7 +503,7 @@ case "$1" in
     ai_run resume 1 "$2" "$3"; exit 0 ;;
   _wip)    # после остановки: незаконченное — коммитом «WIP бота» в ветку задачи, копия — снова на main
     setup_repo; br=$(git branch --show-current)
-    if [ -n "$br" ] && [ "$br" != "$BASE" ]; then keep_wip "$br" >/dev/null || true; git checkout -q "$BASE" 2>/dev/null || true; fi
+    if [ -n "$br" ] && [ "$br" != "$BASE" ]; then keep_wip "$br" >/dev/null || true; git checkout -q "$BASE" 2>/dev/null || true; echo "$br"; fi
     exit 0 ;;
   _status) setup_repo; git status --short; exit 0 ;;
   _reset)  setup_repo; git reset -q --hard && git clean -qfd && git checkout -q "$BASE"; echo ok; exit 0 ;;
