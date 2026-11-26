@@ -2913,7 +2913,9 @@ ${ARCH_FORMAT}`,
           const numbered = /^([1-3])[.)]/.exec(line)
           if (numbered)
             index = Number(numbered[1]) - 1
-          const value = (numbered ? line.slice(numbered[0].length) : line).trim()
+          const value = (numbered
+            ? line.slice(numbered[0].length)
+            : line).trim()
           if (value && !/^пропустить[.!]?$/i.test(value))
             answers[index] = [answers[index], value].filter(Boolean).join('\n')
         }
