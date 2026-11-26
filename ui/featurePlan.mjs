@@ -150,18 +150,37 @@ function nextId(b, prefix) {
   return id
 }
 
-// План бота → доска. Пустая доска — план ложится сразу; иначе — предложения (прежние неразобранные заменяются новыми)
+// План бота → доска. Первый план ложится сразу; следующие — предложения (прежние неразобранные заменяются новыми)
 export function mergeBotPlan(board, plan) {
   const b = clone(board || emptyBoard())
   b.rev++
-  if (!b.items.length && !b.suggestions.length) {
-    const pos = layout(plan.items, plan.links)
-    b.items = plan.items.map(i => ({
+  if (!b.items.some(i => i.by === 'bot') && !b.suggestions.length) {
+    // карточки, которые человек успел добавить, пока бот думал, остаются — строкой под планом
+    const taken = new Set(b.items.map(i => i.id))
+    const ren = new Map(plan.items.filter(i => taken.has(i.id)).map(i => [
+      i.id,
+      nextId(b, 'b'),
+    ]))
+    const idOf = id => ren.get(id) || id
+    const items = plan.items.map(i => ({
       ...i,
-      ...pos.get(i.id),
-      by: 'bot',
+      id: idOf(i.id),
     }))
-    b.links = plan.links.map(l => ({ ...l }))
+    const links = plan.links.map(l => ({
+      from: idOf(l.from),
+      to: idOf(l.to),
+    }))
+    const at = layout(items, links)
+    const bottom = Math.max(PAD - ROW, ...[
+      ...at.values(),
+    ].map(p => p.y)) + ROW
+    b.items.forEach((it, i) => Object.assign(it, { x: PAD + i * COL, y: bottom }))
+    b.items.push(...items.map(i => ({
+      ...i,
+      ...at.get(i.id),
+      by: 'bot',
+    })))
+    b.links.push(...links)
     return b
   }
   b.suggestions = []
@@ -438,7 +457,7 @@ export function approvedPlanText(board, task) {
       : ''
     return head + body
   })
-  const notes = board.items.filter(i => i.type === 'note').map(nt => `- ${[nt.title, nt.text].filter(Boolean).join(': ')}`)
+  const notes = board.items.filter(i => i.type === 'note' && (i.title || i.text)).map(nt => `- ${[nt.title, nt.text].filter(Boolean).join(': ')}`)
   return [
     'План утверждён — теперь можно менять код.',
     '',

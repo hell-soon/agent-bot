@@ -217,3 +217,19 @@ it('доска для бота — блоком plan, который снова 
     { from: 's1', to: 's2' },
   ])
 })
+
+it('первый план ложится сразу, даже если человек успел добавить свою карточку', () => {
+  const r = applyOp(emptyBoard(), { op: 'add', type: 'note', text: 'Моё' })
+  const b = mergeBotPlan(ok(r), parsePlan(planText({
+    items: [
+      { id: r.id, title: 'Шаг с тем же id' },
+      ...PLAN.items,
+    ],
+    links: [],
+  })))
+  assert.equal(b.suggestions.length, 0)
+  assert.equal(b.items.length, 5)
+  const mine = b.items.find(i => i.id === r.id)
+  assert.equal(mine.by, 'user')
+  assert.ok(b.items.filter(i => i.by === 'bot').every(i => i.id !== r.id && i.y < mine.y), 'план выше, id не пересекаются')
+})

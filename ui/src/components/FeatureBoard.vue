@@ -128,36 +128,58 @@ function startMove(e: PointerEvent, it: Item) {
     dy: p.y - it.y,
     moved: false,
   })
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', endMove, { once: true })
+  follow(endMove)
 }
 function onMove(e: PointerEvent) {
   const p = at(e)
-  if (wire.from) { wire.x = p.x; wire.y = p.y; return }
-  drag.x = Math.max(0, Math.round(p.x - drag.dx)); drag.y = Math.max(0, Math.round(p.y - drag.dy)); drag.moved = true
+  if (wire.from) {
+    wire.x = p.x
+    wire.y = p.y
+    return
+  }
+  drag.x = Math.max(0, Math.round(p.x - drag.dx))
+  drag.y = Math.max(0, Math.round(p.y - drag.dy))
+  drag.moved = true
 }
-async function endMove() {
-  window.removeEventListener('pointermove', onMove)
+// Слежка за указателем до отпускания; pointercancel (жест системы, прокрутка) — отмена без изменений
+let unfollow = () => {}
+function follow(end: (e: PointerEvent, cancelled: boolean) => void) {
+  unfollow()
+  const up = (e: PointerEvent) => {
+    unfollow()
+    end(e, e.type === 'pointercancel')
+  }
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', up)
+  window.addEventListener('pointercancel', up)
+  unfollow = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', up)
+    window.removeEventListener('pointercancel', up)
+    unfollow = () => {}
+  }
+}
+onBeforeUnmount(() => unfollow())
+async function endMove(_e: PointerEvent, cancelled: boolean) {
   const { id, x, y, moved } = drag
-  if (moved)
+  if (moved && !cancelled)
     await op({ op: 'move', id, x, y })
   drag.id = ''
 }
 function startWire(e: PointerEvent, it: Item) {
+  if (e.button !== 0)
+    return
   const p = at(e)
   Object.assign(wire, { from: it.id, x: p.x, y: p.y })
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', endWire, { once: true })
+  follow(endWire)
 }
-async function endWire(e: PointerEvent) {
-  window.removeEventListener('pointermove', onMove)
+async function endWire(e: PointerEvent, cancelled: boolean) {
   const from = wire.from
   wire.from = ''
   const to = (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)?.closest<HTMLElement>('[data-step]')?.dataset.step
-  if (to && to !== from)
+  if (!cancelled && to && to !== from)
     await op({ op: 'link', from, to })
 }
-onBeforeUnmount(() => window.removeEventListener('pointermove', onMove))
 
 // ---------- правка и вопросы боту ----------
 const edit = reactive({ id: '', title: '', text: '' })
@@ -757,6 +779,13 @@ svg {
   from {
     opacity: 0;
     transform: scale(0.92) translateY(6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .arr,
+  .card,
+  .chip-sug {
+    animation: none;
   }
 }
 @keyframes chip-in {
