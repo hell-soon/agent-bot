@@ -14,6 +14,7 @@ import { createDependencySchedule, dependencySettings } from './dependencySchedu
 import { recoverDependencyPull, updateDependencies } from './dependencyUpdates.mjs'
 import { createDocReview } from './docReview.mjs'
 import { applyOp as boardOp, approvedPlanText, boardForBot, mergeBotPlan, parsePlan } from './featurePlan.mjs'
+import { parseQuestion, pauseBoard, resumeText } from './featureQuestion.mjs'
 import { impactMarkdown, mapMarkdown, sliceOf } from './project-map.mjs'
 import { pickRoutes, shoot, VIEWPORTS } from './screens.mjs'
 import * as skills from './skills.mjs'
@@ -655,8 +656,9 @@ async function screensJob(run) {
   note(`в PR — ${routes.join(', ')} на телефоне и десктопе`)
 }
 
+let wiping = false // идёт `agent.sh _wip` — копия занята, следующий запуск ждёт
 function next() {
-  if (current || mapping)
+  if (current || mapping || wiping)
     return
   const run = runs.find(r => r.status === 'queued')
   if (!run)
@@ -845,6 +847,14 @@ function next() {
       else if (planning(run) && /```plan/.test(String(ev.result || ''))) {
         appendEvent(run, { type: 'bot_note', text: 'Блок плана не прочитался (битый JSON) — попросите бота прислать план заново', at: Date.now() })
       }
+      // вопрос бота во время разработки фичи → пауза: доска снова открыта, вопрос — у шага
+      const q = run.kind === 'feature' && run.planApproved && !ev.is_error && parseQuestion(ev.result, run.board)
+      if (q) {
+        run.board = pauseBoard(run.board, q)
+        run.pause = { text: q.text, step: q.step, options: q.options, rev: run.board.rev, at: Date.now() }
+        const step = q.step && run.board.items.find(i => i.id === q.step)
+        appendEvent(run, { type: 'bot_note', text: `Вопрос${step ? ` к шагу «${step.title || step.id}»` : ''} — работа на паузе, ответ на доске`, at: Date.now() })
+      }
       // точные цифры хода (по всем моделям, включая подагентов)
       let tin = 0; let tout = 0; let cached = 0
       for (const m of Object.values(ev.modelUsage || {})) {
@@ -907,10 +917,12 @@ function next() {
       })
     }
     run.endedAt = Date.now(); run.liveIn = run.liveOut = undefined
-    if (run.status === 'stopped') {
+    // остановлен или ждёт ответа на вопрос фичи: незаконченное — WIP-коммитом в ветку, копия свободна для других задач
+    if (run.status === 'stopped' || run.pause) {
+      wiping = true
       execFile(AGENT, ['_wip'], {
         env: { ...ENV, BOT_REPO: run.repo || repoOf() },
-      }, () => {})
+      }, () => { wiping = false; next() })
     }
     appendEvent(run, {
       type: 'bot_note',
@@ -2225,13 +2237,27 @@ ${ARCH_FORMAT}`,
     catch (e) { return json(res, { error: e.message }, 400) }
     return json(res, { error: 'Нечего делать' }, 400)
   }
-  // Доска «Разработки фичи»: правки человека и разбор предложений бота; «Начать работу» — утверждение плана
-  const bm = p.match(/^\/api\/runs\/(\d+)\/(board|approve)$/)
+  // Доска «Разработки фичи»: правки человека и разбор предложений бота; «Начать работу» — утверждение плана;
+  // «Продолжить работу» — ответ на вопрос бота (пауза run.pause) и возобновление того же запуска
+  const bm = p.match(/^\/api\/runs\/(\d+)\/(board|approve|resume)$/)
   if (req.method === 'POST' && bm) {
     const run = byId(bm[1])
     if (!run || run.kind !== 'feature')
       return json(res, { error: 'Нет такой задачи' }, 404)
-    if (run.planApproved)
+    if (bm[2] === 'resume') {
+      if (!run.pause)
+        return json(res, { error: 'Бот ни о чём не спрашивал' }, 409)
+      if (!run.sessionId || ['running', 'queued'].includes(run.status))
+        return json(res, { error: 'Дождитесь, пока бот закончит ход' }, 409)
+      if (run.board?.suggestions?.length)
+        return json(res, { error: 'Сначала примите или отклоните предложения бота' }, 400)
+      const b = await body(req)
+      run.reply = resumeText(run.board, run.pause, b.answer)
+      run.pause = undefined; run.status = 'queued'
+      pushState(); next()
+      return json(res, { ok: true })
+    }
+    if (run.planApproved && !(bm[2] === 'board' && run.pause))
       return json(res, { error: 'План уже утверждён — бот работает по нему' }, 409)
     if (bm[2] === 'board') {
       const r = boardOp(run.board, await body(req))
@@ -2267,6 +2293,8 @@ ${ARCH_FORMAT}`,
       const item = b.step && b.text && run.board?.items?.find(i => i.id === b.step)
       if (item)
         run.reply = `Про ${item.type === 'note' ? 'заметку' : 'шаг'} «${item.title || item.text.slice(0, 60)}» (id ${item.id}): ${b.text}`
+      // бот ждёт ответа на вопрос фичи: ответ в ленте — тоже «Продолжить работу» (с вопросом и обновлённым планом)
+      if (run.pause) { run.reply = resumeText(run.board, run.pause, run.reply); run.pause = undefined }
     }
     else if (act === 'stop') {
       if (current?.run === run) {
@@ -2278,13 +2306,13 @@ ${ARCH_FORMAT}`,
       }
     }
     else if (act === 'close') {
-      if (run.status === 'waiting')
-        run.status = 'done'
+      if (run.status === 'waiting') { run.status = 'done'; run.pause = undefined }
     }
     else if (act === 'continue') {
       if (!run.sessionId)
         return json(res, { error: 'Нечего продолжать — нет сессии' }, 400)
-      if (CHAT.has(run.kind) && !run.branch)
+      if (run.pause) { run.reply = resumeText(run.board, run.pause, ''); run.pause = undefined }
+      else if (CHAT.has(run.kind) && !run.branch)
         run.reply = 'Продолжай с того места, где остановился.'
       else run.continue = true
       run.status = 'queued'
@@ -2298,7 +2326,7 @@ ${ARCH_FORMAT}`,
       ].includes(run.status)) {
         if (run.status === 'limited')
           run.status = 'stopped'
-        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, modelUsed, replyFiles, outSeen, outNew, codexImgs, mapDone, mapFile, fsdNew, board, planApproved, ...rest } = run
+        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, modelUsed, replyFiles, outSeen, outNew, codexImgs, mapDone, mapFile, fsdNew, board, planApproved, pause, ...rest } = run
         newRun(rest)
       }
     }
