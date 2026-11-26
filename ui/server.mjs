@@ -1057,6 +1057,7 @@ setInterval(() => {
 // ---------- настройки ----------
 const CONFIG = path.join(BOT, 'config.json')
 const DEFAULTS = {
+  panelAutoUpdate: false,
   repo: '',
   sizeModels: true,
   ai: 'claude',
@@ -1115,6 +1116,8 @@ function writeConfig(patch) {
       c.budget = Math.round(Number(v) * 100) / 100
     if (k === 'codeMode' || k === 'notify' || k === 'sizeModels' || k === 'browserNotify')
       c[k] = !!v
+    if (k === 'panelAutoUpdate' && typeof v === 'boolean')
+      c.panelAutoUpdate = v
     if (k === 'notifyOn' && v && typeof v === 'object')
       c.notifyOn = { done: !!v.done, waiting: !!v.waiting, failed: !!v.failed }
     if (['watchIdle', 'watchMax', 'watchRepeat'].includes(k) && Number(v) >= 0 && Number(v) <= 600)
@@ -1782,6 +1785,19 @@ let panelActive = !process.send
 let panelDrained = false
 const panelWork = new Set()
 let panelWrites = 0
+let panelAutoTimer
+
+function schedulePanelUpdates() {
+  clearInterval(panelAutoTimer)
+  if (!process.connected || readConfig().panelAutoUpdate !== true)
+    return
+  const check = () => {
+    if (process.connected && readConfig().panelAutoUpdate === true)
+      process.send({ type: 'panel-update-install' }, () => {})
+  }
+  check()
+  panelAutoTimer = setInterval(check, 15 * 60000)
+}
 
 function trackPanelWork(promise) {
   panelWork.add(promise)
@@ -1808,7 +1824,7 @@ async function handleRequest(req, res) {
     return json(res, { error: 'forbidden' }, 403)
 
   if (req.method === 'GET' && p === '/api/panel-update')
-    return json(res, panelUpdateState)
+    return json(res, { ...panelUpdateState, automatic: readConfig().panelAutoUpdate === true })
   if (!panelActive || panelDrained)
     return json(res, { error: 'Панель перезапускается' }, 503)
   if (req.method === 'POST' && p === '/api/panel-update') {
@@ -1816,7 +1832,12 @@ async function handleRequest(req, res) {
       return json(res, { error: 'Запустите панель командой bot ui' }, 503)
     if (!req.headers['content-type']?.startsWith('application/json'))
       return json(res, { error: 'Ожидается JSON' }, 415)
-    const { action } = await body(req) || {}
+    const { action, enabled } = await body(req) || {}
+    if (action === 'automatic' && typeof enabled === 'boolean') {
+      writeConfig({ panelAutoUpdate: enabled })
+      schedulePanelUpdates()
+      return json(res, { ok: true })
+    }
     if (action !== 'check' && action !== 'install')
       return json(res, { error: 'Неизвестная команда обновления' }, 400)
     process.send({ type: `panel-update-${action}` })
@@ -2474,6 +2495,7 @@ function startPanelJobs() {
   setInterval(scanDocumentation, 60000)
   setInterval(scanDependencies, 60000)
   setInterval(drainPanel, 1000)
+  schedulePanelUpdates()
   next()
 }
 process.on('message', (message) => {
