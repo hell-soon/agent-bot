@@ -840,7 +840,7 @@ function next() {
       if (plan) {
         const had = run.board?.items?.length
         run.board = mergeBotPlan(run.board, plan)
-        appendEvent(run, { type: 'bot_note', text: had ? `План: предложений на доске — ${run.board.suggestions.length}` : `План на доске: ${plan.items.length} элементов`, at: Date.now() })
+        appendEvent(run, { type: 'bot_note', text: had ? `План: предложений на доске — ${run.board.suggestions.length}` : `План на доске: ${plan.items.length} элементов${plan.sketches.length ? `, эскизов — ${plan.sketches.length}` : ''}`, at: Date.now() })
       }
       else if (planning(run) && /```plan/.test(String(ev.result || ''))) {
         appendEvent(run, { type: 'bot_note', text: 'Блок плана не прочитался (битый JSON) — попросите бота прислать план заново', at: Date.now() })
