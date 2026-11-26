@@ -3,7 +3,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { api } from '../../lib/api'
 import { ago, aiName } from '../../lib/format'
-import { bothAi, store, toast } from '../../lib/store'
+import { bothAi, loadDocReview, store, toast } from '../../lib/store'
 
 const s = reactive<Record<string, any>>({
   ai: '',
@@ -18,6 +18,7 @@ const s = reactive<Record<string, any>>({
   impact: true,
   fsd: true,
   screens: true,
+  docReviewSince: 0,
   siteUrl: '',
   previewUrl: '',
   pages: '',
@@ -32,6 +33,7 @@ const loaded = ref(false)
 const log = ref<any[]>([])
 const autoInfo = ref<{ count: number, max: number, lastAt: number }>({ count: 0, max: 10, lastAt: 0 })
 const checking = ref(false)
+const docReviewSaving = ref(false)
 
 async function load() {
   const r = await api(`/api/repo-settings?repo=${encodeURIComponent(store.curRepo)}`)
@@ -74,12 +76,17 @@ async function runTest() {
 const BLOCK: Record<string, string> = { vercel: 'закрыто защитой Vercel — нужен секрет обхода', login: 'страница входа — нужен cookie' }
 
 async function save(patch: Record<string, any>) {
+  const repo = store.curRepo
   try {
-    const r = await api('/api/repo-settings', { repo: store.curRepo, ...patch })
-    Object.assign(s, r.settings)
+    const r = await api('/api/repo-settings', { repo, ...patch })
     store.cfg.repos = {
       ...(store.cfg.repos || {}),
-      [store.curRepo]: r.settings,
+      [repo]: r.settings,
+    }
+    if (repo === store.curRepo) {
+      Object.assign(s, { docReviewSince: 0 }, r.settings)
+      if (typeof patch.docReview === 'boolean')
+        void loadDocReview()
     }
     toast('Сохранено')
   }
@@ -89,6 +96,17 @@ function setAuto(k: string, v: boolean) {
   return save({
     auto: { ...s.auto, [k]: v },
   })
+}
+async function setDocReview(event: Event) {
+  const input = event.target as HTMLInputElement
+  docReviewSaving.value = true
+  try {
+    await save({ docReview: input.checked })
+    input.checked = Boolean(s.docReviewSince)
+  }
+  finally {
+    docReviewSaving.value = false
+  }
 }
 async function runNow() {
   checking.value = true
@@ -199,6 +217,18 @@ const AUTO = [
           type="checkbox"
           :checked="s.map"
           @change="save({ map: ($event.target as HTMLInputElement).checked })"
+        ><span /></label>
+      </div>
+      <div class="set">
+        <div class="lbl">
+          Проверять документацию после слияния<small>Находки по README.md и Markdown в docs/ появятся на главной. Проверка охватывает слияния в базовую ветку с момента включения.</small>
+        </div>
+        <label class="sw"><input
+          type="checkbox"
+          aria-label="Проверять документацию после слияния"
+          :checked="!!s.docReviewSince"
+          :disabled="docReviewSaving"
+          @change="setDocReview"
         ><span /></label>
       </div>
       <div class="set">

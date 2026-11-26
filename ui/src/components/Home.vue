@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { aiName, greeting, modKey, money, startOfDay, tok } from '../lib/format'
 import { newTask, repoRuns, resetRepo, runAction, select, shownAi, startJob, store, toast } from '../lib/store'
 import Composer from './Composer.vue'
+import DocReview from './DocReview.vue'
 import Icon from './Icon.vue'
 
 interface Card {
@@ -127,6 +128,8 @@ async function discard() {
     </div>
 
     <composer />
+
+    <doc-review />
 
     <section class="attn">
       <h2>Требует внимания</h2>

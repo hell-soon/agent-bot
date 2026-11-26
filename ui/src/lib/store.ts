@@ -55,6 +55,20 @@ export const MODES: Record<Mode, { name: string, ph?: string, hint: string, more
 
 export type DrawerPage = 'main' | 'memory' | 'repo' | 'skills' | 'rules' | 'perms' | 'notify' | 'access'
 export interface Skill { id: string, name: string, description: string, manual: boolean, source: string, sourceLabel: string, group: string, enabled: boolean, readonly: boolean }
+interface DocReviewStatus {
+  enabled: boolean
+  checking: boolean
+  error: boolean
+  findings: {
+    id: string
+    file: string
+    line: number
+    fragment: string
+    suggestion: string
+    pr: { number: number, title: string, url: string }
+    issue?: { number: number, url: string }
+  }[]
+}
 
 const savedMode = ls.get('bot:mode') as Mode | null
 export const store = reactive({
@@ -71,6 +85,7 @@ export const store = reactive({
   ais: { claude: true, codex: true } as Record<Ai, boolean>,
   cfg: {} as any,
   gh: { issues: [] as any[], prs: [] as any[] },
+  docReview: null as DocReviewStatus | null,
   codexInfo: null as null | { models: any[], login: { ok: boolean, text: string }, limits: any },
   repoDirty: '',
   selected: null as string | null,
@@ -208,6 +223,19 @@ export async function loadGh(fresh = false) {
   try { store.gh = await api(`/api/github?repo=${encodeURIComponent(store.curRepo)}${fresh ? '&fresh' : ''}`) }
   catch { /* GitHub недоступен */ }
 }
+let docReviewRequest = 0
+export async function loadDocReview() {
+  const repo = store.curRepo
+  if (!repo)
+    return
+  const request = ++docReviewRequest
+  try {
+    const status = await api<DocReviewStatus>(`/api/doc-review?repo=${encodeURIComponent(repo)}`)
+    if (request === docReviewRequest && repo === store.curRepo)
+      store.docReview = status
+  }
+  catch { /* обновится при переподключении к панели */ }
+}
 export async function loadCodex() {
   try { store.codexInfo = await api('/api/codex') }
   catch { /* нет codex */ }
@@ -252,6 +280,8 @@ export function setRepo(r: string) {
   store.curRepo = r
   ls.set('bot:repo', r)
   store.gh = { issues: [], prs: [] }
+  store.docReview = null
+  void loadDocReview()
   loadGh(); checkRepo(); loadSkills()
 }
 
@@ -295,11 +325,15 @@ export async function init() {
     store.curRepo = opened.repo
   store.ready = true
   loadGh(); checkRepo(); loadCodex(); loadSkills()
+  void loadDocReview()
   const live = new EventSource('/api/events')
+  live.onopen = loadDocReview
   live.onmessage = (m) => {
     const d = JSON.parse(m.data)
     if (d.type === 'notify')
       return browserNotify(d)
+    if (d.type === 'doc-review' && d.repo === store.curRepo)
+      return void loadDocReview()
     if (d.type !== 'state')
       return
     const wasBusy = !!store.current
