@@ -4,6 +4,7 @@ import { api } from '../../lib/api'
 
 interface PanelUpdate {
   supported: boolean
+  automatic: boolean
   current: string
   available: string
   phase: string
@@ -53,6 +54,24 @@ async function run(action: 'check' | 'install') {
   }
 }
 
+async function saveAutomatic(event: Event) {
+  const checkbox = event.target as HTMLInputElement
+  pending.value = true
+  try {
+    await api('/api/panel-update', { action: 'automatic', enabled: checkbox.checked })
+    await refresh()
+  }
+  catch (e) {
+    checkbox.checked = state.value?.automatic ?? false
+    error.value = e instanceof Error
+      ? e.message
+      : String(e)
+  }
+  finally {
+    pending.value = false
+  }
+}
+
 function reload() {
   window.location.reload()
 }
@@ -86,6 +105,24 @@ onUnmounted(() => clearInterval(timer))
     >
       {{ state?.error || error }}
     </p>
+    <div
+      v-if="state?.supported"
+      class="set"
+    >
+      <label
+        class="lbl"
+        for="panel-auto-update"
+      >
+        Обновлять панель автоматически<small>Проверка при запуске и каждые 15 минут.</small>
+      </label>
+      <input
+        id="panel-auto-update"
+        type="checkbox"
+        :checked="state.automatic"
+        :disabled="pending"
+        @change="saveAutomatic"
+      >
+    </div>
     <div
       v-if="state?.supported"
       class="seg"
