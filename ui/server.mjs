@@ -976,6 +976,7 @@ function next() {
       })
     }
   }
+  const originalReply = run.reply
   run.reply = undefined; run.replyFiles = undefined
   if (run.watchdog) { run.watchdog = undefined; run.reason = undefined }
   run.status = 'running'; run.startedAt = Date.now()
@@ -1006,6 +1007,14 @@ function next() {
     env.BOT_MODE = 'feature'
   if (run.featureBranch)
     env.BOT_FEATURE_BRANCH = run.featureBranch
+  if (run.kind === 'task')
+    env.BOT_TASK_BRANCH = `agent/task-${run.createdAt}-${run.id}`
+  if (run.setupAnswers) {
+    const [commands, context, rules] = run.setupAnswers
+    env.BOT_SETUP_COMMANDS = commands
+    env.BOT_SETUP_CONTEXT = context
+    env.BOT_SETUP_RULES = rules
+  }
   const turnStart = Date.now()
   run.outNew = []
   const child = spawn(AGENT, args, {
@@ -1079,11 +1088,16 @@ function next() {
     }
   }
 
+  let setupPending = false
   readline.createInterface({ input: child.stdout }).on('line', (line) => {
     wd.last = Date.now()
     let ev
     try { ev = JSON.parse(line) }
     catch { ev = { type: 'bot_raw', text: line } }
+    if (ev.type === 'bot_setup') {
+      setupPending = true
+      ev.type = 'bot_note'
+    }
     watchTools(ev)
     if (ev.type === 'system' && ev.subtype === 'init') {
       run.sessionId = ev.session_id; run.modelUsed = ev.model; turn = {
@@ -1181,6 +1195,12 @@ function next() {
     current = null
     const why = diagnose(run)
     if (run.status === 'stopped') { /* остановлен вручную */ }
+    else if (setupPending && code === 0) {
+      run.setupPending = true
+      run.reply = originalReply
+      run.replyFiles = sendFiles
+      run.status = 'waiting'
+    }
     else if (run.error) {
       run.status = 'failed'; run.reason = /незакоммиченн/.test(run.error)
         ? 'В копии бота остались несохранённые правки от прошлой задачи, поэтому эта не стартовала. Откройте ту задачу и нажмите «Продолжить» — или отбросьте правки и повторите.'
@@ -2864,7 +2884,7 @@ ${ARCH_FORMAT}`,
       run.board = r.board; pushState()
       return json(res, { board: r.board, id: r.id })
     }
-    if (!run.sessionId || ['running', 'queued'].includes(run.status))
+    if (!run.sessionId || run.setupPending || ['running', 'queued'].includes(run.status))
       return json(res, { error: 'Дождитесь, пока бот закончит план' }, 409)
     if (!run.board?.items?.some(i => i.type === 'step'))
       return json(res, { error: 'В плане нет ни одного шага' }, 400)
@@ -2884,6 +2904,26 @@ ${ARCH_FORMAT}`,
     const act = m[2]
     if (act === 'reply') {
       const b = await body(req)
+      if (run.setupPending) {
+        if (typeof b.text !== 'string' || !b.text.trim())
+          return json(res, { error: 'Введите ответы или напишите «Пропустить»' }, 400)
+        const answers = ['', '', '']
+        let index = 0
+        for (const line of b.text.replaceAll('\0', '').trim().split(/\r?\n/)) {
+          const numbered = /^([1-3])[.)]/.exec(line)
+          if (numbered)
+            index = Number(numbered[1]) - 1
+          const value = (numbered ? line.slice(numbered[0].length) : line).trim()
+          if (value && !/^пропустить[.!]?$/i.test(value))
+            answers[index] = [answers[index], value].filter(Boolean).join('\n')
+        }
+        run.setupAnswers = answers
+        run.setupPending = undefined
+        run.status = 'queued'
+        pushState()
+        next()
+        return json(res, { ok: true })
+      }
       const files = pickFiles(b.files)
       if (!run.sessionId || (!b.text && !files.length))
         return json(res, { error: 'Нечего продолжать' }, 400)
@@ -2935,7 +2975,7 @@ ${ARCH_FORMAT}`,
       ].includes(run.status)) {
         if (run.status === 'limited')
           run.status = 'stopped'
-        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, modelUsed, replyFiles, outSeen, outNew, codexImgs, mapDone, mapFile, fsdNew, board, planApproved, pause, ...rest } = run
+        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, modelUsed, replyFiles, outSeen, outNew, codexImgs, mapDone, mapFile, fsdNew, board, planApproved, pause, setupPending: _setupPending, setupAnswers: _setupAnswers, ...rest } = run
         newRun({ ...rest, featureBranch: undefined })
       }
     }

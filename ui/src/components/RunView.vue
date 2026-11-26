@@ -35,6 +35,14 @@ watch(
       setTab('plan')
   },
 )
+watch(
+  () => r.value?.setupPending,
+  (pending) => {
+    if (pending)
+      tab.value = 'feed'
+  },
+  { immediate: true },
+)
 
 const scroller = () => document.getElementById('scroll')
 function nearBottom() { const s = scroller(); return !s || s.scrollTop + s.clientHeight > s.scrollHeight - 160 }
@@ -173,7 +181,7 @@ onMounted(() => document.addEventListener('keydown', onKey))
 onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
 
 // ---------- ответ ----------
-const canReply = computed(() => r.value?.sessionId && ['waiting', 'done', 'failed'].includes(r.value.status) && !['issue', 'pr'].includes(r.value.kind))
+const canReply = computed(() => r.value?.setupPending || (r.value?.sessionId && ['waiting', 'done', 'failed'].includes(r.value.status) && !['issue', 'pr'].includes(r.value.kind)))
 async function send() {
   const text = answerText.value.trim()
   if (at.busy.value)
@@ -815,6 +823,7 @@ function act(a: string) {
   font-size: 12px;
   color: var(--muted);
   margin: 4px 0;
+  white-space: pre-line;
 }
 .result {
   margin-left: 30px;
