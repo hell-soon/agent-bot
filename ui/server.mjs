@@ -34,6 +34,75 @@ function hasCmd(c) {
 const AIS = { claude: hasCmd('claude'), codex: hasCmd('codex') }
 const fallbackAi = () => (AIS.claude || !AIS.codex ? 'claude' : 'codex')
 fs.mkdirSync(DATA, { recursive: true })
+// Вложения из панели (картинки, файлы): uploads/<дата>/<метка>-<имя>; ИИ получает пути
+const UPLOADS = path.join(BOT, 'uploads')
+const IMG = /\.(?:png|jpe?g|gif|webp)$/i
+const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' }
+const isUpload = p => typeof p === 'string' && path.resolve(p).startsWith(UPLOADS + path.sep) && fs.existsSync(p)
+const fileInfo = p => ({ path: p, name: path.basename(p).replace(/^[a-z0-9]{8}-/, ''), image: IMG.test(p) })
+// Исходящие файлы бота: uploads/out/<id задачи>; плюс картинки, которые Codex сгенерировал за время хода
+const outboxOf = run => path.join(UPLOADS, 'out', run.id)
+const CODEX_IMAGES = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'generated_images')
+function listFiles(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory()
+      ? listFiles(path.join(dir, e.name))
+      : e.isFile() && !e.name.startsWith('.') ? [path.join(dir, e.name)] : [])
+  }
+  catch { return [] }
+}
+function collectOut(run, since) {
+  const box = outboxOf(run)
+  if (run.ai === 'codex' && since) { // забытые генерации — сами кладём в исходящие
+    for (const f of listFiles(CODEX_IMAGES)) {
+      try {
+        if (IMG.test(f) && fs.statSync(f).mtimeMs >= since && !(run.codexImgs || []).includes(f)) {
+          fs.mkdirSync(box, { recursive: true })
+          fs.copyFileSync(f, path.join(box, `gen-${path.basename(f)}`))
+          run.codexImgs = [...(run.codexImgs || []), f]
+        }
+      }
+      catch {}
+    }
+  }
+  const fresh = listFiles(box).filter(f => !(run.outSeen || []).includes(f)).slice(0, 20)
+  if (!fresh.length)
+    return []
+  run.outSeen = [...(run.outSeen || []), ...fresh]
+  appendEvent(run, { type: 'bot_files', from: 'bot', files: fresh.map(f => ({ ...fileInfo(f), name: path.basename(f) })), at: Date.now() })
+  return fresh
+}
+// какие файлы задача правила: из её журнала (Edit/Write), пути — относительно копии репозитория
+const editCache = new Map() // id → { mtime, files }
+function editedFiles(run) {
+  const f = evFile(run.id)
+  let st; try { st = fs.statSync(f) }
+  catch { return [] }
+  const hit = editCache.get(run.id)
+  if (hit && hit.mtime === st.mtimeMs)
+    return hit.files
+  // копия репозитория — work/<owner>__<repo>/ (у старых задач — work/<repo>/)
+  const root = new RegExp(`^${path.join(BOT, 'work').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/[^/]+/`)
+  const count = new Map()
+  for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
+    if (!line.includes('"tool_use"'))
+      continue
+    let ev; try { ev = JSON.parse(line) }
+    catch { continue }
+    for (const c of ev.message?.content || []) {
+      const fp = c.type === 'tool_use' && ['Edit', 'MultiEdit', 'Write', 'NotebookEdit'].includes(c.name) && (c.input?.file_path || c.input?.notebook_path)
+      if (!fp)
+        continue
+      const rel = root.test(fp) ? fp.replace(root, '') : !fp.startsWith('/') ? fp : null
+      if (rel)
+        count.set(rel, (count.get(rel) || 0) + 1)
+    }
+  }
+  const files = [...count].map(([p, edits]) => ({ path: p, edits }))
+  editCache.set(run.id, { mtime: st.mtimeMs, files })
+  return files
+}
+const pickFiles = list => (Array.isArray(list) ? list : []).filter(isUpload).slice(0, 10)
 
 /** @type {any[]} */
 let runs = []
@@ -215,6 +284,7 @@ function pushLive() {
 const publicRuns = () => runs.slice(-80).reverse()
 
 function appendEvent(run, ev) {
+  ev.t ??= Date.now() // время каждого шага — для схемы задачи
   fs.appendFileSync(evFile(run.id), `${JSON.stringify(ev)}\n`)
   broadcast({ type: 'event', ev }, run.id)
 }
@@ -295,6 +365,11 @@ function next() {
     : run.reply
       ? ['_resume', run.sessionId, run.reply]
       : KINDS[run.kind](run)
+  const sendFiles = cont
+    ? null
+    : run.reply
+      ? run.replyFiles
+      : !run.sessionId ? run.files : null
   run.continue = undefined; run.reason = undefined; run.resumeAt = undefined; run.lastText = undefined
   if (cont) {
     appendEvent(run, {
@@ -307,6 +382,7 @@ function next() {
     appendEvent(run, {
       type: 'bot_user',
       text: run.reply,
+      files: run.replyFiles?.map(fileInfo),
       at: Date.now(),
     })
   }
@@ -316,8 +392,10 @@ function next() {
       text: 'Запуск',
       at: Date.now(),
     })
+    if (sendFiles?.length)
+      appendEvent(run, { type: 'bot_files', files: sendFiles.map(fileInfo), at: Date.now() })
   }
-  run.reply = undefined
+  run.reply = undefined; run.replyFiles = undefined
   if (run.watchdog) { run.watchdog = undefined; run.reason = undefined }
   run.status = 'running'; run.startedAt = Date.now()
   const env = { ...ENV }
@@ -332,6 +410,13 @@ function next() {
     env.BOT_CODEX_MODEL = run.model
   if (run.effort)
     env.BOT_EFFORT = run.effort
+  // вложения: к первому запуску — из задачи, к ответу — из ответа; «Продолжить» их не повторяет
+  const files = sendFiles
+  if (files?.length)
+    env.BOT_FILES = files.join('\n')
+  env.BOT_OUTBOX = outboxOf(run)
+  const turnStart = Date.now()
+  run.outNew = []
   const child = spawn(AGENT, args, {
     env,
     detached: true,
@@ -435,6 +520,8 @@ function next() {
     if (ev.type === 'bot_error')
       run.error = ev.text
     appendEvent(run, slim(ev))
+    if (ev.type === 'result')
+      run.outNew.push(...collectOut(run, turnStart))
     if (ev.type === 'result' || ev.type === 'bot_result')
       pushState()
   })
@@ -442,6 +529,7 @@ function next() {
   child.stderr.on('data', (d) => { errTail = (errTail + d).slice(-4000) })
   child.on('close', (code) => {
     clearInterval(wdTimer)
+    run.outNew.push(...collectOut(run, turnStart))
     current = null
     const why = diagnose(run)
     if (run.status === 'stopped') { /* остановлен вручную */ }
@@ -888,6 +976,23 @@ async function tg(method, payload, token = tgToken()) {
     throw new Error(d.description || `Telegram: ${r.status}`)
   return d.result
 }
+// файлы от бота — следом за сообщением: картинки как фото, остальное документом (до 5 шт., до 20 МБ)
+async function tgFiles(chat, files) {
+  for (const f of files.slice(0, 5)) {
+    try {
+      if (fs.statSync(f).size > 20 * 1024 * 1024)
+        continue
+      const photo = IMG.test(f) && !/\.gif$/i.test(f)
+      const fd = new FormData()
+      fd.append('chat_id', chat)
+      fd.append(photo ? 'photo' : 'document', new Blob([fs.readFileSync(f)]), path.basename(f))
+      const r = await fetch(`https://api.telegram.org/bot${tgToken()}/${photo ? 'sendPhoto' : 'sendDocument'}`, { method: 'POST', body: fd, signal: AbortSignal.timeout(60000) })
+      if (!r.ok)
+        console.error('telegram file:', r.status, await r.text().catch(() => ''))
+    }
+    catch (e) { console.error('telegram file:', e.message) }
+  }
+}
 function notify(run) {
   const c = readConfig(); const on = { ...DEFAULTS.notifyOn, ...c.notifyOn }
   const kind = run.status === 'done'
@@ -914,8 +1019,11 @@ function notify(run) {
   if (c.browserNotify)
     broadcast({ type: 'notify', title, body: run.title, detail: detail.slice(0, 200), run: run.id })
   if (c.tgChat && tgToken()) {
-    const text = [`${title}`, run.title, detail && `\n${detail.slice(0, 600)}`, run.prUrl].filter(Boolean).join('\n')
-    tg('sendMessage', { chat_id: c.tgChat, text, disable_web_page_preview: true }).catch(e => console.error('telegram:', e.message))
+    const out = run.outNew || []
+    const text = [`${title}`, run.title, detail && `\n${detail.slice(0, 600)}`, run.prUrl, out.length && `Файлов от бота: ${out.length} — в панели`].filter(Boolean).join('\n')
+    tg('sendMessage', { chat_id: c.tgChat, text, disable_web_page_preview: true })
+      .then(() => tgFiles(c.tgChat, out))
+      .catch(e => console.error('telegram:', e.message))
   }
 }
 
@@ -1061,9 +1169,19 @@ async function ghLists(repo, force) {
 }
 // репозитории, к которым у приложения бота есть доступ
 let reposCache = { at: 0, list: [] }
+let reposLoading = null
 async function repoList(force) {
-  if (!force && reposCache.list.length && Date.now() - reposCache.at < 300000)
+  // свежее 5 мин — сразу; старее — отдаём старое и обновляем в фоне (опрос всех установок — несколько секунд)
+  if (!force && reposCache.list.length) {
+    if (Date.now() - reposCache.at > 300000 && !reposLoading)
+      reposLoading = loadRepos().finally(() => { reposLoading = null })
     return reposCache.list
+  }
+  if (!reposLoading)
+    reposLoading = loadRepos().finally(() => { reposLoading = null })
+  return reposLoading
+}
+async function loadRepos() {
   // все установки приложения: ваш аккаунт и организации
   const r = await new Promise(resolve => execFile(path.join(BOT, 'token.sh'), ['--repos'], { env: ENV, timeout: 30000 }, (err, out) => {
     try { resolve(err ? [] : JSON.parse(out)) }
@@ -1352,6 +1470,7 @@ const server = http.createServer(async (req, res) => {
       ai,
       repo,
       refs: refs.length ? refs : undefined,
+      files: pickFiles(b.files).length ? pickFiles(b.files) : undefined,
     }
     const made = []
     if (b.kind === 'queue' || b.kind === 'chain') {
@@ -1429,6 +1548,46 @@ const server = http.createServer(async (req, res) => {
       return json(res, { error: 'Нет такой задачи' }, 404)
     return json(res, { pr: await prSummary(run, url.searchParams.has('fresh')) })
   }
+  if (req.method === 'POST' && p === '/api/upload') {
+    const max = 25 * 1024 * 1024; const chunks = []; let size = 0
+    for await (const c of req) {
+      size += c.length
+      if (size > max)
+        return json(res, { error: 'Файл больше 25 МБ' }, 413)
+      chunks.push(c)
+    }
+    let name = 'file'
+    try { name = decodeURIComponent(String(req.headers['x-name'] || 'file')) }
+    catch {}
+    const ext = (name.match(/\.([a-z0-9]{1,8})$/i)?.[1] || (MIME[String(req.headers['content-type']).split('/')[1]] ? String(req.headers['content-type']).split('/')[1] : '')).toLowerCase()
+    const base = name.replace(/\.[^.]*$/, '').replace(/[^\w\-а-яё ]+/gi, '_').trim().slice(0, 60) || 'file'
+    const dir = path.join(UPLOADS, new Date().toISOString().slice(0, 10))
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, `${Math.random().toString(36).slice(2, 10).padEnd(8, '0')}-${base}${ext ? `.${ext}` : ''}`)
+    fs.writeFileSync(file, Buffer.concat(chunks))
+    return json(res, { ...fileInfo(file), size })
+  }
+  if (p === '/api/file') { // превью вложений — только из uploads/
+    const f = url.searchParams.get('p')
+    if (!isUpload(f))
+      return json(res, { error: 'not found' }, 404)
+    const ext = f.split('.').pop().toLowerCase()
+    res.writeHead(200, { 'content-type': MIME[ext] || 'application/octet-stream', 'cache-control': 'max-age=86400', 'x-content-type-options': 'nosniff' })
+    return fs.createReadStream(f).pipe(res)
+  }
+  if (p === '/api/graph') { // граф проекта: какие файлы бот правил в каких задачах
+    const repo = repoOf(url.searchParams.get('repo'))
+    return json(res, { runs: runs.filter(r => r.repo === repo).map(r => ({
+      id: r.id,
+      title: r.title,
+      status: r.status,
+      ai: r.ai === 'codex' ? 'codex' : 'claude',
+      kind: r.kind,
+      prUrl: r.prUrl,
+      at: r.endedAt || r.startedAt || r.createdAt,
+      files: editedFiles(r),
+    })).filter(r => r.files.length) })
+  }
   if (p === '/api/installations') { // установки GitHub App: чьи можно использовать (BOT_OWNERS), чужие — удалить
     const run = args => new Promise(resolve => execFile(path.join(BOT, 'token.sh'), args, { env: ENV, timeout: 30000 }, (err, out, e) => resolve({ err: err && (String(e).trim() || err.message), out })))
     if (req.method === 'POST') {
@@ -1501,16 +1660,17 @@ const server = http.createServer(async (req, res) => {
     catch (e) { return json(res, { error: e.message }, 400) }
     return json(res, { error: 'Нечего делать' }, 400)
   }
-  const m = p.match(/^\/api\/runs\/(\d+)\/(reply|stop|close|retry|delete)$/)
+  const m = p.match(/^\/api\/runs\/(\d+)\/(reply|stop|close|retry|delete|continue)$/)
   if (req.method === 'POST' && m) {
     const run = byId(m[1]); if (!run)
       return json(res, { error: 'Нет такого запуска' }, 404)
     const act = m[2]
     if (act === 'reply') {
       const b = await body(req)
-      if (!run.sessionId || !b.text)
+      const files = pickFiles(b.files)
+      if (!run.sessionId || (!b.text && !files.length))
         return json(res, { error: 'Нечего продолжать' }, 400)
-      run.reply = b.text; run.status = 'queued'
+      run.reply = b.text || 'Посмотри вложения.'; run.replyFiles = files.length ? files : undefined; run.status = 'queued'
     }
     else if (act === 'stop') {
       if (current?.run === run) {
@@ -1542,7 +1702,7 @@ const server = http.createServer(async (req, res) => {
       ].includes(run.status)) {
         if (run.status === 'limited')
           run.status = 'stopped'
-        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, modelUsed, ...rest } = run
+        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, modelUsed, replyFiles, outSeen, outNew, codexImgs, ...rest } = run
         newRun(rest)
       }
     }
@@ -1572,6 +1732,7 @@ const server = http.createServer(async (req, res) => {
   json(res, { error: 'not found' }, 404)
 })
 
+repoList() // список репозиториев — заранее, чтобы панель открывалась сразу
 server.listen(PORT, '127.0.0.1', () => { console.log(`bot ui: http://127.0.0.1:${PORT}`); next() })
 process.on('SIGTERM', () => {
   try {

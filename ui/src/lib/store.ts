@@ -74,6 +74,7 @@ export const store = reactive({
   codexInfo: null as null | { models: any[], login: { ok: boolean, text: string }, limits: any },
   repoDirty: '',
   selected: null as string | null,
+  graph: false, // экран «Граф проекта» (#graph)
   // строка ввода
   compose: {
     mode: (savedMode && MODES[savedMode]
@@ -124,6 +125,7 @@ function readHash() {
   const h = location.hash.slice(1); store.selected = h && store.runs.some(r => r.id === h)
     ? h
     : null
+  store.graph = h === 'graph'
 }
 window.addEventListener('popstate', readHash)
 export function select(id: string) {
@@ -131,12 +133,20 @@ export function select(id: string) {
   if (r?.repo && r.repo !== store.curRepo && store.repos.includes(r.repo))
     setRepo(r.repo)
   store.selected = id
+  store.graph = false
   store.sbOpen = false
   history.pushState(null, '', `#${id}`)
 }
 export function goHome() {
   store.selected = null
+  store.graph = false
   history.pushState(null, '', '#')
+}
+export function openGraph() {
+  store.selected = null
+  store.graph = true
+  store.sbOpen = false
+  history.pushState(null, '', '#graph')
 }
 export function newTask(mode: Mode = 'task', text?: string) {
   store.sbOpen = false
@@ -215,7 +225,7 @@ export async function runAction(id: string, act: string) {
   }
   catch (e: any) { toast(e.message) }
 }
-export async function reply(id: string, text: string) { await api(`/api/runs/${id}/reply`, { text }) }
+export async function reply(id: string, text: string, files?: string[]) { await api(`/api/runs/${id}/reply`, { text, files }) }
 // Скиллы бота (включённые — для подсказок «/» и поиска)
 export async function loadSkills() {
   try { store.skills = (await api<{ skills: Skill[] }>(`/api/skills?repo=${encodeURIComponent(store.curRepo)}`)).skills }

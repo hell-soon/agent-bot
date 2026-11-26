@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { isActive, startOfDay, STATUS } from '../lib/format'
-import { checkLimits, newTask, otherActive, repoRuns, select, setRepo, store } from '../lib/store'
+import { checkLimits, newTask, openGraph, otherActive, repoRuns, select, setRepo, store } from '../lib/store'
 import Icon from './Icon.vue'
 import Limits from './Limits.vue'
 
@@ -53,6 +53,16 @@ async function refresh() { checking.value = true; await checkLimits(); checking.
       @click="newTask()"
     >
       <icon name="plus" />Новая задача<kbd>N</kbd>
+    </button>
+    <button
+      class="btn ghost graph-btn"
+      :class="{ on: store.graph }"
+      @click="openGraph"
+    >
+      <icon
+        name="graph"
+        :size="16"
+      />Граф проекта
     </button>
 
     <div class="list">
@@ -182,6 +192,18 @@ async function refresh() { checking.value = true; await checkLimits(); checking.
   &:disabled {
     appearance: none;
     opacity: 1;
+  }
+}
+.graph-btn {
+  margin: 0 10px 6px;
+  justify-content: flex-start;
+  gap: 9px;
+  height: 32px;
+  font-size: 13px;
+  color: var(--muted);
+  &.on {
+    color: var(--text);
+    background: var(--card);
   }
 }
 .new {

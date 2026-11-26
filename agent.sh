@@ -207,6 +207,28 @@ OPTS=(--append-system-prompt "$PROMPT" --settings "$SETTINGS"
 [ -d "$SKILLS_DIR/skills" ] && OPTS+=(--plugin-dir "$SKILLS_DIR" --add-dir "$SKILLS_DIR")
 OPTS+=(--add-dir "$MEMORY_DIR")   # чтобы бот мог дописывать память без вопросов
 
+# Вложения из панели (BOT_FILES — пути, по одному в строке): дописываются к задаче/ответу один раз
+ATTACH_NOTE=""; CODEX_IMAGES=""
+if [ -n "$BOT_FILES" ]; then
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    ATTACH_NOTE="$ATTACH_NOTE
+- $f"
+    printf '%s' "$f" | grep -qiE '\.(png|jpe?g|gif|webp)$' && CODEX_IMAGES="${CODEX_IMAGES:+$CODEX_IMAGES
+}$f"
+  done <<< "$BOT_FILES"
+fi
+[ -d "$BOT_DIR/uploads" ] && OPTS+=(--add-dir "$BOT_DIR/uploads")
+# Исходящие файлы (BOT_OUTBOX от панели): что бот кладёт сюда, панель показывает в ленте и шлёт в Telegram
+OUTBOX_NOTE=""
+if [ -n "$BOT_OUTBOX" ]; then
+  mkdir -p "$BOT_OUTBOX"
+  OUTBOX_NOTE="
+
+## Файлы для владельца
+Если нужно показать владельцу картинку или файл — скриншот, сгенерированное изображение, макет, отчёт, — положи копию в $BOT_OUTBOX: панель покажет их в ленте. Картинки, созданные генерацией изображений, тоже копируй туда (только выбранные). Секретов туда не клади. Файлы, которые нужны проекту, — как обычно в репозиторий."
+fi
+
 # Справочные репозитории (--ref / BOT_REFS): свежая копия только для чтения в refs/
 REF_NOTE=""
 if [ -n "$BOT_REFS" ]; then
@@ -227,6 +249,7 @@ if [ -n "$BOT_REFS" ]; then
 Смотри туда, когда задача просит «как там» или нужен пример: ищи Grep-ом, читай кусками.$REF_NOTE"
   OPTS[1]="$PROMPT"   # обновить --append-system-prompt
 fi
+[ -n "$OUTBOX_NOTE" ] && { PROMPT="$PROMPT$OUTBOX_NOTE"; OPTS[1]="$PROMPT"; }
 # Какой ИИ работает: claude (по умолчанию) или codex. BOT_AI=codex bot … — разово; в панели — ⚙ или у задачи.
 AI=${BOT_AI:-$(rcfg .ai)}; AI=${AI:-$(cfg .ai)}
 case "${AI:-claude}" in claude|codex) ;; *) echo "Неизвестный ИИ: $AI (claude | codex)" >&2; exit 1 ;; esac
@@ -289,8 +312,17 @@ to_codex() {
 #   ai_run new <panel 0|1> "задача"    |    ai_run resume <panel 0|1> SESSION "сообщение"
 ai_run() {
   local mode=$1 panel=$2; shift 2
+  if [ -n "$ATTACH_NOTE" ]; then
+    local note="
+
+## Вложения от владельца
+Владелец приложил файлы — это часть задачи. Открой и посмотри их (картинки — через Read):$ATTACH_NOTE"
+    if [ "$mode" = new ]; then set -- "$1$note"; else set -- "$1" "$2$note"; fi
+    ATTACH_NOTE=""
+    [ "$AI" = codex ] && export CODEX_IMAGES
+  fi
   if [ "$AI" = codex ]; then
-    export CODEX_WRITABLE="$MEMORY_DIR"
+    export CODEX_WRITABLE="$MEMORY_DIR${BOT_OUTBOX:+:$BOT_OUTBOX}"
     if [ "$mode" = new ]; then
       local pre="$PROMPT"; [ "$panel" = 1 ] && pre="$pre
 
@@ -300,6 +332,7 @@ $PANEL_PROMPT"
 ## Задача
 $(to_codex "$1")"
     else node "$ADAPTER" resume "$1" "$(to_codex "$2")"; fi
+    unset CODEX_IMAGES
   else
     local extra=(); [ "$panel" = 1 ] && extra=(--append-system-prompt "$PANEL_PROMPT")
     if [ "$mode" = new ]; then claude "${AUTO[@]}" "${STREAM[@]}" "${OPTS[@]}" "${extra[@]}" -- "$1"

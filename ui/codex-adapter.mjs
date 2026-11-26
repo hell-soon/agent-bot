@@ -20,13 +20,15 @@ const cfg = [
   '-c',
   'approval_policy="never"',
 ]
-if (process.env.CODEX_WRITABLE)
-  cfg.push('-c', `sandbox_workspace_write.writable_roots=${JSON.stringify([process.env.CODEX_WRITABLE])}`)
+if (process.env.CODEX_WRITABLE) // через «:» — несколько папок (память, исходящие файлы)
+  cfg.push('-c', `sandbox_workspace_write.writable_roots=${JSON.stringify(process.env.CODEX_WRITABLE.split(':').filter(Boolean))}`)
 if (process.env.CODEX_EFFORT)
   cfg.push('-c', `model_reasoning_effort="${process.env.CODEX_EFFORT}"`)
 const model = process.env.CODEX_MODEL
   ? ['-m', process.env.CODEX_MODEL]
   : []
+// картинки из панели — после текста задачи (-i многозначный и иначе «съел» бы текст)
+const images = (process.env.CODEX_IMAGES || '').split('\n').filter(Boolean).flatMap(f => ['-i', f])
 const args = mode === 'resume'
   ? [
       'exec',
@@ -37,6 +39,7 @@ const args = mode === 'resume'
       ...cfg,
       a1,
       prompt,
+      ...images,
     ]
   : [
       'exec',
@@ -45,6 +48,7 @@ const args = mode === 'resume'
       ...model,
       ...cfg,
       prompt,
+      ...images,
     ]
 
 const out = o => process.stdout.write(`${JSON.stringify(o)}\n`)

@@ -1,10 +1,16 @@
 // Лента запуска: события stream-json (Claude, Codex — через адаптер) → элементы для отображения.
-export type FeedItem
+type FeedItemBody
   = | {
     k: 'msg'
     key: string
     who: 'bot' | 'user'
     text: string
+  }
+  | {
+    k: 'files'
+    key: string
+    who?: 'bot' | 'user'
+    files: { path: string, name: string, image: boolean }[]
   }
   | {
     k: 'tool'
@@ -33,6 +39,9 @@ export type FeedItem
     html: string
     bad?: boolean
   }
+
+// ei — номер события в журнале: по нему схема задачи прокручивает ленту к нужному месту
+export type FeedItem = FeedItemBody & { ei?: number }
 
 export interface Question {
   question: string
@@ -103,13 +112,16 @@ export function buildFeed(events: any[], short: (p: string) => string) {
   const files = new Set<string>()
   let n = 0
   const key = () => String(n++)
-  for (const ev of events) {
+  let ei = 0
+  const push = (it: FeedItem) => { it.ei = ei; items.push(it) }
+  for (; ei < events.length; ei++) {
+    const ev = events[ei]
     if (ev.type === 'assistant') {
       for (const c of ev.message?.content || []) {
         if (c.type === 'text' && c.text?.trim()) {
           const { text, questions } = splitChoices(c.text)
           if (text.trim()) {
-            items.push({
+            push({
               k: 'msg',
               key: key(),
               who: 'bot',
@@ -117,7 +129,7 @@ export function buildFeed(events: any[], short: (p: string) => string) {
             })
           }
           for (const q of questions) {
-            items.push({
+            push({
               k: 'choice',
               key: key(),
               q,
@@ -127,7 +139,7 @@ export function buildFeed(events: any[], short: (p: string) => string) {
         }
         if (c.type === 'tool_use') {
           if (c.name === 'TodoWrite') {
-            todos = c.input?.todos || []; items.push({
+            todos = c.input?.todos || []; push({
               k: 'tool',
               key: key(),
               icon: '☐',
@@ -146,7 +158,7 @@ export function buildFeed(events: any[], short: (p: string) => string) {
             icon,
             html,
           }
-          tools.set(c.id, it); items.push(it)
+          tools.set(c.id, it); push(it)
         }
       }
     }
@@ -165,14 +177,14 @@ export function buildFeed(events: any[], short: (p: string) => string) {
     }
     else if (ev.type === 'result') {
       if (ev.is_error) {
-        items.push({
+        push({
           k: 'note',
           key: key(),
           text: 'Закончил с ошибкой',
         })
       }
       else if (ev.num_turns > 2) {
-        items.push({
+        push({
           k: 'note',
           key: key(),
           text: `${ev.num_turns} шагов${ev.duration_ms
@@ -187,16 +199,21 @@ export function buildFeed(events: any[], short: (p: string) => string) {
       for (const it of items) {
         if (it.k === 'choice' && !it.answered) { it.answered = true; it.answer = ev.text }
       }
-      items.push({
+      push({
         k: 'msg',
         key: key(),
         who: 'user',
         text: ev.text,
       })
+      if (ev.files?.length)
+        push({ k: 'files', key: key(), files: ev.files })
+    }
+    else if (ev.type === 'bot_files' && ev.files?.length) {
+      push({ k: 'files', key: key(), who: ev.from === 'bot' ? 'bot' : 'user', files: ev.files })
     }
     else if (ev.type === 'bot_note') {
       if (!/^(Ждёт вашего ответа|Запуск|Готово)$/.test(ev.text)) {
-        items.push({
+        push({
           k: 'note',
           key: key(),
           text: ev.text,
@@ -205,14 +222,14 @@ export function buildFeed(events: any[], short: (p: string) => string) {
     }
     else if (ev.type === 'bot_result') {
       if (ev.closed) {
-        items.push({
+        push({
           k: 'result',
           key: key(),
           html: esc(ev.text),
         })
       }
       else if ('pr' in ev) {
-        items.push(ev.pr
+        push(ev.pr
           ? {
               k: 'result',
               key: key(),
@@ -227,7 +244,7 @@ export function buildFeed(events: any[], short: (p: string) => string) {
       }
     }
     else if (ev.type === 'bot_error') {
-      items.push({
+      push({
         k: 'result',
         key: key(),
         html: esc(ev.text) + (ev.code === 'dirty'
@@ -237,7 +254,7 @@ export function buildFeed(events: any[], short: (p: string) => string) {
       })
     }
     else if (ev.type === 'bot_stderr' || (ev.type === 'bot_raw' && ev.text?.trim())) {
-      items.push({
+      push({
         k: 'tool',
         key: key(),
         icon: '!',

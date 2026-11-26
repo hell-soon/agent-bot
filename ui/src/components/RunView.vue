@@ -6,6 +6,10 @@ import { aiName, md, modKey, money, runTok, STATUS, tok, until } from '../lib/fo
 import { goHome, reply, resetRepo, runAction, selectedRun, store, toast } from '../lib/store'
 import Icon from './Icon.vue'
 import PrSummary from './PrSummary.vue'
+import RunSchema from './RunSchema.vue'
+import { ls } from '../lib/api'
+import AttachList from './AttachList.vue'
+import { useAttach } from '../lib/upload'
 
 const r = selectedRun
 const events = shallowRef<any[]>([])
@@ -45,6 +49,19 @@ function short(p: string) {
   return p
 }
 const feed = computed(() => buildFeed(events.value, short))
+// Вкладки: лента или схема (запоминаем выбор)
+const tab = ref<'feed' | 'schema'>(ls.get('bot:tab') === 'schema' ? 'schema' : 'feed')
+function setTab(t: 'feed' | 'schema') { tab.value = t; ls.set('bot:tab', t) }
+// из схемы — к месту в ленте: первый пункт ленты с этим или следующим событием, с подсветкой
+async function jump(ei: number) {
+  setTab('feed')
+  await nextTick()
+  const el = [...document.querySelectorAll<HTMLElement>('.feed [data-ei]')].find(x => Number(x.dataset.ei) >= ei)
+  if (!el)
+    return
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash')
+}
 const ai = computed(() => (r.value?.ai === 'codex'
   ? 'codex'
   : 'claude'))
@@ -59,7 +76,7 @@ function showWho(i: number) {
   } return true
 }
 function isBot(it: FeedItem) {
-  return it.k === 'tool' || it.k === 'choice' || it.k === 'result' || (it.k === 'msg' && it.who === 'bot')
+  return it.k === 'tool' || it.k === 'choice' || it.k === 'result' || ((it.k === 'msg' || it.k === 'files') && it.who === 'bot')
 }
 
 // ---------- вопросы с вариантами ----------
@@ -69,6 +86,8 @@ const openChoices = computed(
 )
 const canAnswer = computed(() => r.value && !['running', 'queued'].includes(r.value.status))
 const answerText = ref('')
+const at = useAttach()
+const replyFile = ref<HTMLInputElement>()
 function pick(it: Extract<FeedItem, { k: 'choice' }>, i: number) {
   if (it.answered || !canAnswer.value)
     return
@@ -122,12 +141,15 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
 // ---------- ответ ----------
 const canReply = computed(() => r.value?.sessionId && ['waiting', 'done', 'failed'].includes(r.value.status) && !['issue', 'pr'].includes(r.value.kind))
 async function send() {
-  const text = answerText.value.trim(); if (!text)
+  const text = answerText.value.trim()
+  if (at.busy.value)
+    return toast('Файлы ещё загружаются')
+  if (!text && !at.atts.value.length)
     return
   if (openChoices.value.some(c => picks[c.key]?.length))
     return sendChoices()
   try {
-    await reply(r.value!.id, text); answerText.value = ''
+    await reply(r.value!.id, text, at.paths()); answerText.value = ''; at.clear()
   }
   catch (e: any) { toast(e.message) }
 }
@@ -250,9 +272,34 @@ function act(a: string) {
         >
           {{ r.note }}
         </div>
+        <div class="seg tabs">
+          <button
+            :class="{ on: tab === 'feed' }"
+            @click="setTab('feed')"
+          >
+            Лента
+          </button>
+          <button
+            :class="{ on: tab === 'schema' }"
+            @click="setTab('schema')"
+          >
+            Схема
+          </button>
+        </div>
       </header>
 
-      <div class="feed">
+      <run-schema
+        v-if="tab === 'schema'"
+        :events="events"
+        :n="events.length"
+        :short="short"
+        :live="r.status === 'running'"
+        @jump="jump"
+      />
+      <div
+        v-else
+        class="feed"
+      >
         <template
           v-for="(it, i) in feed.items"
           :key="it.key"
@@ -268,12 +315,14 @@ function act(a: string) {
           </div>
           <div
             v-if="it.k === 'msg'"
+            :data-ei="it.ei"
             class="msg"
             :class="{ user: it.who === 'user' }"
             v-html="md(it.text)"
           />
           <div
             v-else-if="it.k === 'tool'"
+            :data-ei="it.ei"
             class="tool"
             :class="{ error: it.error }"
           >
@@ -302,6 +351,7 @@ function act(a: string) {
           </div>
           <div
             v-else-if="it.k === 'choice'"
+            :data-ei="it.ei"
             class="choice"
             :class="{ answered: it.answered }"
           >
@@ -345,14 +395,23 @@ function act(a: string) {
               </button>
             </div>
           </div>
+          <attach-list
+            v-else-if="it.k === 'files'"
+            :data-ei="it.ei"
+            class="msg-files"
+            :class="{ bot: it.who === 'bot' }"
+            :files="it.files"
+          />
           <div
             v-else-if="it.k === 'note'"
+            :data-ei="it.ei"
             class="note"
           >
             {{ it.text }}
           </div>
           <div
             v-else-if="it.k === 'result'"
+            :data-ei="it.ei"
             class="result"
             :class="{ bad: it.bad }"
             v-html="it.html"
@@ -377,7 +436,35 @@ function act(a: string) {
           v-else-if="canReply"
           class="reply"
           @submit.prevent="send"
+          @paste="at.onPaste"
+          @dragover.prevent
+          @drop="at.onDrop"
         >
+          <attach-list
+            class="reply-files"
+            :files="at.atts.value"
+            :busy="at.busy.value"
+            removable
+            @remove="at.remove"
+          />
+          <button
+            type="button"
+            class="btn ghost icon"
+            title="Приложить картинку или файл (можно вставить ⌘V)"
+            @click="replyFile?.click()"
+          >
+            <icon
+              name="clip"
+              :size="16"
+            />
+          </button>
+          <input
+            ref="replyFile"
+            type="file"
+            multiple
+            hidden
+            @change="at.add(($event.target as HTMLInputElement).files); ($event.target as HTMLInputElement).value = ''"
+          >
           <textarea
             v-model="answerText"
             rows="1"
@@ -802,21 +889,26 @@ function act(a: string) {
 }
 .reply {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: flex-end;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 18px;
   box-shadow: var(--shadow);
-  padding: 8px 8px 8px 12px;
+  padding: 8px;
   &:focus-within {
     border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
   }
+  // поле — той же высоты, что кнопки (34 px), текст по центру; растёт вверх, кнопки остаются внизу
   textarea {
     background: transparent;
     border: 0;
-    min-height: 40px;
-    height: 40px;
+    box-sizing: border-box;
+    min-height: 34px;
+    height: 34px;
+    padding: 8px 4px;
+    line-height: 18px;
     resize: none;
     &:focus {
       border: 0;
@@ -930,6 +1022,40 @@ function act(a: string) {
   .choice {
     padding-left: 0;
     margin-left: 0;
+  }
+}
+.tabs {
+  justify-self: start;
+  margin-top: 10px;
+}
+// подсветка пункта, к которому перешли из схемы
+:deep(.flash) {
+  animation: flash 1.6s ease-out;
+}
+@keyframes flash {
+  0%, 30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 10px; }
+  100% { box-shadow: 0 0 0 3px transparent; }
+}
+// вложения: в ответе — строкой над полем, в ленте — справа, как реплика человека
+.reply-files {
+  flex-basis: 100%;
+}
+.reply textarea {
+  flex: 1;
+}
+.msg-files {
+  justify-self: end;
+  align-self: flex-end;
+  justify-content: flex-end;
+  max-width: 80%;
+  &.bot { // файлы от бота — слева, крупнее
+    justify-self: start;
+    align-self: flex-start;
+    justify-content: flex-start;
+    :deep(.att.img) {
+      width: 180px;
+      height: 180px;
+    }
   }
 }
 </style>

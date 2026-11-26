@@ -24,6 +24,8 @@ const P: Record<string, string> = {
   swap: '<path d="M7 16V4M3 8l4-4 4 4M17 8v12M21 16l-4 4-4-4"/>',
   home: '<path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
   limit: '<path d="M12 20a8 8 0 1 0-8-8M12 12l4-3"/>',
+  clip: '<path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>',
+  graph: '<circle cx="5" cy="6" r="2.2"/><circle cx="18" cy="5" r="2.2"/><circle cx="12" cy="13" r="2.6"/><circle cx="6" cy="19" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M6.8 7.3l3.4 3.9M16.4 6.4l-2.9 4.6M10.4 14.9l-2.8 2.6M14.2 14.5l3 2.3"/>',
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
   check: '<path d="M20 6L9 17l-5-5"/>',

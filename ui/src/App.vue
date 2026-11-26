@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted } from 'vue'
 import CommandPalette from './components/CommandPalette.vue'
+import GraphView from './components/GraphView.vue'
 import Home from './components/Home.vue'
 import Icon from './components/Icon.vue'
 import RunView from './components/RunView.vue'
@@ -33,7 +34,7 @@ function onKey(e: KeyboardEvent) {
     e.preventDefault()
     newTask()
   }
-  else if (e.key === 'Escape' && store.selected) {
+  else if (e.key === 'Escape' && (store.selected || store.graph)) {
     goHome()
   }
 }
@@ -94,6 +95,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
           v-if="store.selected"
           :key="store.selected"
         />
+        <graph-view v-else-if="store.graph" />
         <home v-else />
       </div>
     </section>

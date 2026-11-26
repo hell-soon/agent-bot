@@ -3,9 +3,14 @@ import type { Mode } from '../lib/store'
 import { computed, nextTick, ref, watch } from 'vue'
 import { aiName, modKey } from '../lib/format'
 import { bothAi, enabledSkills, loadCodex, MODES, setMode, startJob, store } from '../lib/store'
+import { useAttach } from '../lib/upload'
+import AttachList from './AttachList.vue'
 import Icon from './Icon.vue'
 
 const c = store.compose
+const at = useAttach()
+const fileIn = ref<HTMLInputElement>()
+const dragging = ref(false)
 const m = computed(() => MODES[c.mode])
 const MAIN: Mode[] = ['task', 'issue', 'idea', 'bug', 'pr']
 const EXTRA: Mode[] = ['queue', 'chain', 'triage', 'tickets']
@@ -65,7 +70,9 @@ function togglePick(n: number, on: boolean) {
 
 async function submit() {
   err.value = ''
-  const b: Record<string, any> = { model: model.value, ai: ai.value, refs: refs.value }
+  if (at.busy.value)
+    return (err.value = 'Файлы ещё загружаются')
+  const b: Record<string, any> = { model: model.value, ai: ai.value, refs: refs.value, files: at.paths() }
   const text = c.draft.trim()
   if (c.mode === 'issue') {
     if (!issuePick.value)
@@ -80,11 +87,11 @@ async function submit() {
       return; Object.assign(b, { kind: 'pr', pr: c.prPick, text })
   }
   else {
-    if (!text && ['task', 'idea', 'bug'].includes(c.mode))
-      return (err.value = 'Опишите задачу'); Object.assign(b, { kind: c.mode, text })
+    if (!text && !at.atts.value.length && ['task', 'idea', 'bug'].includes(c.mode))
+      return (err.value = 'Опишите задачу'); Object.assign(b, { kind: c.mode, text: text || 'Посмотри вложения.' })
   }
   busy.value = true
-  try { await startJob(b) }
+  try { await startJob(b); at.clear() }
   catch (e: any) { err.value = e.message }
   finally { busy.value = false }
 }
@@ -138,8 +145,13 @@ function onKey(e: KeyboardEvent) {
 <template>
   <form
     class="composer"
+    :class="{ drag: dragging }"
     @submit.prevent="submit"
     @keydown="onKey"
+    @paste="at.onPaste"
+    @dragover.prevent="dragging = true"
+    @dragleave.self="dragging = false"
+    @drop="dragging = false; at.onDrop($event)"
   >
     <select
       v-if="c.mode === 'pr' && store.gh.prs.length"
@@ -224,6 +236,12 @@ function onKey(e: KeyboardEvent) {
       rows="2"
       :placeholder="`${m.ph}${c.mode === 'task' ? ' · «/» — скиллы' : ''}`"
       @input="fit"
+    />
+    <attach-list
+      :files="at.atts.value"
+      :busy="at.busy.value"
+      removable
+      @remove="at.remove"
     />
     <div
       v-if="slash.length"
@@ -350,6 +368,24 @@ function onKey(e: KeyboardEvent) {
       >
         Параметры
       </button>
+      <button
+        type="button"
+        class="btn ghost sm icon"
+        title="Приложить картинку или файл (можно вставить ⌘V или перетащить)"
+        @click="fileIn?.click()"
+      >
+        <icon
+          name="clip"
+          :size="15"
+        />
+      </button>
+      <input
+        ref="fileIn"
+        type="file"
+        multiple
+        hidden
+        @change="at.add(($event.target as HTMLInputElement).files); ($event.target as HTMLInputElement).value = ''"
+      >
       <span class="spacer" />
       <span class="small">{{ modKey }}↵</span>
       <button
@@ -373,6 +409,10 @@ function onKey(e: KeyboardEvent) {
   gap: 10px;
   &:focus-within {
     border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  }
+  &.drag {
+    border-color: var(--accent);
+    border-style: dashed;
   }
 }
 textarea {
