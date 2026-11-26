@@ -43,6 +43,10 @@ catch {}
 for (const r of runs) {
   if (r.status === 'running')
     r.status = 'stopped'
+  // раньше в model попадала подпись «codex · gpt-…» из лога, и «Продолжить» передавал её Codex как имя модели
+  if (typeof r.model === 'string' && /\s|·|^codex/.test(r.model)) {
+    r.modelUsed = r.model; delete r.model
+  }
   // старые задачи без репозитория — из репозитория по умолчанию (история у каждого проекта своя)
   if (!isRepo(r.repo) && DEFAULT_REPO)
     r.repo = DEFAULT_REPO
@@ -391,7 +395,7 @@ function next() {
     catch { ev = { type: 'bot_raw', text: line } }
     watchTools(ev)
     if (ev.type === 'system' && ev.subtype === 'init') {
-      run.sessionId = ev.session_id; run.model ||= ev.model; turn = {
+      run.sessionId = ev.session_id; run.modelUsed = ev.model; turn = {
         ids: new Set(),
         in: 0,
         out: 0,
@@ -1538,7 +1542,7 @@ const server = http.createServer(async (req, res) => {
       ].includes(run.status)) {
         if (run.status === 'limited')
           run.status = 'stopped'
-        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, ...rest } = run
+        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, modelUsed, ...rest } = run
         newRun(rest)
       }
     }

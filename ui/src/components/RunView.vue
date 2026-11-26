@@ -143,9 +143,9 @@ const pct = computed(() => (r.value?.ctx
 const dur = computed(() => (r.value?.startedAt
   ? Math.max(1, Math.round(((r.value.endedAt || Date.now()) - r.value.startedAt) / 60000))
   : 0))
-const modelName = computed(() => (r.value?.model && !/^codex/.test(r.value.model)
-  ? r.value.model.replace(/^claude-/, '')
-  : ''))
+const modelName = computed(() => String(r.value?.modelUsed || r.value?.model || '')
+  .replace(/^codex( · )?/, '')
+  .replace(/^claude-/, ''))
 const acts = computed(() => {
   const x = r.value; if (!x)
     return []
