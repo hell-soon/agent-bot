@@ -13,7 +13,7 @@ import Icon from './Icon.vue'
 interface CEdge { from: string, to: string, bad?: string }
 interface BotRun { id: string, title: string, status: string, ai: string, at: number, files: string[] }
 interface Data { repo: string, ref: string, sha: string, files: string[], edges: CEdge[], fsd: { root: string, layers: string[], segmented: string[] } | null, bot: BotRun[], error?: string }
-interface GNode extends SimulationNodeDatum { id: string, label: string, files: string[], r: number, color: string, ins: number, layer: number, anchor?: 'start' | 'end' | 'middle' }
+interface GNode extends SimulationNodeDatum { id: string, label: string, files: string[], r: number, color: string, ins: number, layer: number, anchor?: 'start' | 'end' | 'middle', parent?: string }
 type GLink = SimulationLinkDatum<GNode> & { w: number, bad: string[] }
 
 const d = ref<Data | null>(null)
@@ -39,7 +39,7 @@ async function load(fresh = false) {
   catch (e: any) { err.value = e.message }
   finally { loading.value = false }
 }
-watch(() => store.curRepo, () => { picked.value = null; fstack.value = []; f.task = ''; load() })
+watch(() => store.curRepo, () => { picked.value = null; fstack.value = []; expanded.value = []; f.task = ''; load() })
 
 // ---------- группы: слайс FSD или папка (большие папки дробятся глубже, пока в группе не ≤ 40 файлов) ----------
 let folderOf = new Map<string, string>()
@@ -62,9 +62,15 @@ function buildFolders(files: string[]) {
   }
   folderOf = new Map(files.map(x => [x, key(x, depth.get(x)!)]))
 }
+// раскрытые по месту слайсы/папки: вместо узла-группы — её файлы, в том же слое
+const expanded = ref<string[]>([])
 function groupOf(file: string) {
   if (f.level === 'files')
     return file
+  const g = groupKey(file)
+  return expanded.value.includes(g) ? file : g
+}
+function groupKey(file: string) {
   const fsd = d.value?.fsd
   if (fsd && file.startsWith(fsd.root)) {
     const [layer, slice] = file.slice(fsd.root.length).split('/')
@@ -91,14 +97,14 @@ function colorOf(id: string) {
 function shortName(id: string) {
   const fsd = d.value?.fsd
   const s = fsd && id.startsWith(fsd.root) ? id.slice(fsd.root.length) : id
-  return f.level === 'files' ? s.split('/').slice(-2).join('/') : s
+  return f.level === 'files' || /\.[a-z0-9]+$/i.test(id) ? s.split('/').slice(-2).join('/') : s
 }
 const SEGMENTS = new Set(['ui', 'model', 'lib', 'api', 'config', 'types', 'store', 'stores', 'utils', 'hooks', 'composables'])
 // подпись на узле: в слоях слой и так виден — только имя слайса / файла; index.* — по папке («map/index.ts» → «map»)
 function nodeLabel(n: GNode) {
   const parts = n.id.split('/')
   let t = f.layout === 'layers' && n.layer >= 0 ? parts.at(-1)! : n.label
-  if (f.level === 'files' && /^index\.[^.]+$/.test(parts.at(-1)!)) {
+  if ((f.level === 'files' || n.parent) && /^index\.[^.]+$/.test(parts.at(-1)!)) {
     t = parts.at(-2) || t
     // сегменты слайса (ui, model, lib…) сами по себе ни о чём не говорят — с именем слайса: «LegalPolicy/ui»
     if (SEGMENTS.has(t) && parts.length > 2)
@@ -177,6 +183,7 @@ function rebuild() {
   if (!data)
     return
   const old = new Map(nodes.value.map(n => [n.id, n]))
+  hover.value = null // старый узел исчезнет — pointerleave уже не придёт
   buildFolders(data.files)
   const groups = new Map<string, GNode>()
   for (const file of data.files) {
@@ -184,7 +191,7 @@ function rebuild() {
     let n = groups.get(g)
     if (!n) {
       const o = old.get(g)
-      n = { id: g, label: shortName(g), files: [], r: 4, color: colorOf(g), ins: 0, layer: layerOf(g), x: o?.x, y: o?.y }
+      n = { id: g, label: shortName(g), files: [], r: 4, color: colorOf(g), ins: 0, layer: layerOf(g), x: o?.x, y: o?.y, parent: g === file && f.level === 'groups' ? groupKey(file) : undefined }
       groups.set(g, n)
     }
     n.files.push(file)
@@ -222,7 +229,8 @@ function rebuild() {
   const small = f.level === 'files'
   for (const n of ns) {
     n.ins = importers.get(n.id)?.size || 0
-    n.r = ((small ? 3 : 5) + Math.sqrt(n.ins) * (small ? 1.6 : 2.4)) * opt.nodeSize
+    const fileNode = small || !!n.parent
+    n.r = ((fileNode ? 3 : 5) + Math.sqrt(n.ins) * (fileNode ? 1.6 : 2.4)) * opt.nodeSize
   }
   // полный граф (с хабами) — для фокуса и панели
   all.value = { byId: new Map(ns.map(n => [n.id, n])), links: lks.map(l => ({ a: l.source as string, b: l.target as string, w: l.w, bad: l.bad })) }
@@ -266,7 +274,7 @@ function rebuild() {
   if (first)
     setTimeout(fit, 1100)
 }
-watch([d, () => f.level, () => f.bad, () => f.layout, () => opt.hideOther, () => opt.nodeSize, () => opt.spacing, () => opt.perRow, () => opt.hideHubs, () => opt.hubPct], () => { rebuild(); if (fstack.value.length) buildFocus() })
+watch([d, () => f.level, () => expanded.value, () => f.bad, () => f.layout, () => opt.hideOther, () => opt.nodeSize, () => opt.spacing, () => opt.perRow, () => opt.hideHubs, () => opt.hubPct], () => { rebuild(); if (fstack.value.length) buildFocus() })
 
 // ---------- раскладка «Слои»: полоса на слой, ряды, порядок по соседям (меньше пересечений) ----------
 const bands = shallowRef<{ title: string, y: number, color: string }[]>([])
@@ -387,12 +395,22 @@ function move(e: PointerEvent) {
   }
   else { view.x = drag.vx + e.clientX - drag.sx; view.y = drag.vy + e.clientY - drag.sy }
 }
-function up() {
+// ⇧/⌥-клик — раскрыть слайс по месту (или свернуть обратно), обычный — фокус
+function toggleExpand(n: GNode) {
+  const key = n.parent || n.id
+  if (expanded.value.includes(key))
+    expanded.value = expanded.value.filter(x => x !== key)
+  else if (f.level === 'groups' && !n.parent && n.files.length > 1)
+    expanded.value = [...expanded.value, key]
+}
+function up(e?: PointerEvent) {
   if (!drag)
     return
   if (drag.node) {
     if (f.layout === 'net') { drag.node.fx = null; drag.node.fy = null; sim?.alphaTarget(0) }
-    if (!drag.moved)
+    if (!drag.moved && (e?.shiftKey || e?.altKey) && !focusId.value)
+      toggleExpand(drag.node)
+    else if (!drag.moved)
       focusOn(drag.node.id)
   }
   else if (!drag.moved && !focusId.value) { picked.value = null }
@@ -592,6 +610,10 @@ const ago = (t: number) => new Date(t).toLocaleDateString('ru', { day: 'numeric'
           {{ r.title.slice(0, 60) }}
         </option>
       </select>
+      <span
+        v-if="f.level === 'groups'"
+        class="small tip"
+      >⇧-клик — раскрыть</span>
       <span class="spacer" />
       <button
         class="btn ghost sm"
@@ -618,7 +640,7 @@ const ago = (t: number) => new Date(t).toLocaleDateString('ru', { day: 'numeric'
         @wheel.prevent="onWheel"
         @pointerdown="down($event)"
         @pointermove="move"
-        @pointerup="up"
+        @pointerup="up($event)"
         @pointercancel="up"
       >
         <defs>
@@ -670,7 +692,7 @@ const ago = (t: number) => new Date(t).toLocaleDateString('ru', { day: 'numeric'
             v-for="n in shownNodes"
             :key="n.id"
             class="node"
-            :class="{ dim: dim(n), sel: n.id === picked?.id, bot: f.bot && botHit(n) }"
+            :class="{ dim: dim(n), sel: n.id === picked?.id, bot: f.bot && botHit(n), exp: !!n.parent }"
             :transform="`translate(${n.x || 0},${n.y || 0})`"
             @pointerdown="down($event, n)"
             @pointerenter="hover = n"
@@ -729,9 +751,34 @@ const ago = (t: number) => new Date(t).toLocaleDateString('ru', { day: 'numeric'
         <span class="small hint">слева — кто использует · справа — что импортирует · клик — шаг дальше</span>
       </div>
       <div
-        v-else-if="hubs.length && opt.hideHubs && !f.bad"
-        class="crumbs hubs small"
+        v-else-if="expanded.length || (hubs.length && opt.hideHubs && !f.bad)"
+        class="crumbs plain"
       >
+        <div
+          v-if="expanded.length"
+          class="hubs small"
+        >
+          Раскрыто:
+          <span
+            v-for="x in expanded"
+            :key="x"
+            class="exp"
+          >{{ shortName(x) }}<button
+            title="Свернуть"
+            @click="expanded = expanded.filter(y => y !== x)"
+          >×</button></span>
+          <button
+            v-if="expanded.length > 1"
+            class="btn ghost sm"
+            @click="expanded = []"
+          >
+            Свернуть все
+          </button>
+        </div>
+        <div
+          v-if="hubs.length && opt.hideHubs && !f.bad"
+          class="hubs small"
+        >
         Скрыты общие модули:
         <a
           v-for="h in hubs"
@@ -745,6 +792,7 @@ const ago = (t: number) => new Date(t).toLocaleDateString('ru', { day: 'numeric'
         >
           Показать
         </button>
+        </div>
       </div>
 
       <div
@@ -844,8 +892,19 @@ const ago = (t: number) => new Date(t).toLocaleDateString('ru', { day: 'numeric'
         v-if="picked"
         class="panel"
       >
-        <h4>{{ f.level === 'files' ? 'Файл' : d?.fsd ? 'Слайс' : 'Папка' }}</h4>
+        <h4>{{ f.level === 'files' || picked.parent ? 'Файл' : d?.fsd ? 'Слайс' : 'Папка' }}</h4>
         <code class="path">{{ picked.id }}</code>
+        <div
+          v-if="f.level === 'groups' && (picked.parent || picked.files.length > 1)"
+          class="acts"
+        >
+          <button
+            class="btn sm"
+            @click="toggleExpand(picked); focusExit()"
+          >
+            {{ picked.parent ? `Свернуть ${shortName(picked.parent)}` : expanded.includes(picked.id) ? 'Свернуть' : 'Раскрыть по месту' }}
+          </button>
+        </div>
         <p class="small">
           {{ picked.files.length > 1 ? `${picked.files.length} файлов · ` : '' }}используют {{ picked.ins }} · импортирует {{ outOf(picked.id).length }}
         </p>
@@ -1009,6 +1068,30 @@ const ago = (t: number) => new Date(t).toLocaleDateString('ru', { day: 'numeric'
     opacity: 0.04;
   }
 }
+.tip {
+  color: var(--muted);
+}
+.panel .acts {
+  display: flex;
+  gap: 6px;
+  margin: 4px 0;
+}
+.crumbs .exp {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text);
+  button {
+    all: unset;
+    cursor: pointer;
+    color: var(--muted);
+    padding: 0 3px;
+  }
+}
+.node.exp circle {
+  stroke: color-mix(in srgb, var(--text) 45%, transparent);
+  stroke-dasharray: 2 2;
+}
 .crumbs.narrow {
   right: 344px;
 }
@@ -1038,8 +1121,11 @@ const ago = (t: number) => new Date(t).toLocaleDateString('ru', { day: 'numeric'
   .hint {
     color: var(--muted);
   }
-  &.hubs {
-    right: auto;
+  .hubs {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
     padding: 4px 6px 4px 12px;
     border-radius: 10px;
     background: color-mix(in srgb, var(--card) 90%, transparent);
