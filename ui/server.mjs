@@ -5,9 +5,11 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import process from 'node:process'
 import readline from 'node:readline'
 import { FORMAT as ARCH_FORMAT, scan as archScan } from './arch-scan.mjs'
 import { codeGraph } from './code-graph.mjs'
+import { createDocReview } from './docReview.mjs'
 import { impactMarkdown, mapMarkdown, sliceOf } from './project-map.mjs'
 import { pickRoutes, shoot, VIEWPORTS } from './screens.mjs'
 import * as skills from './skills.mjs'
@@ -82,12 +84,16 @@ const codeCache = new Map() // repo → { sha, graph }
 const sh = (cmd, args, opts = {}) => new Promise((resolve, reject) => execFile(cmd, args, { env: ENV, maxBuffer: 64 * 1024 * 1024, timeout: 60000, ...opts }, (e, out, err) => (e ? reject(new Error(String(err || e.message).trim().split('\n').pop())) : resolve(out))))
 // базовая ветка репозитория в копии бота: клонировать при надобности, освежить, вернуть ref, sha и чтение из git
 const fetchedAt = new Map()
-async function baseRef(repo, fresh, wantRef) {
+async function baseRef(repo, fresh, wantRef, { strict = false } = {}) {
   const W = path.join(BOT, 'work', repo.replace('/', '__'))
   if (!fs.existsSync(path.join(W, '.git')))
     await sh(AGENT, ['_status'], { env: { ...ENV, BOT_REPO: repo } }) // клонирует и настроит доступ
   if (fresh || Date.now() - (fetchedAt.get(repo) || 0) > 600000) {
-    await sh('git', ['-C', W, 'fetch', '-q', 'origin']).catch(() => {})
+    const fetch = sh('git', ['-C', W, 'fetch', '-q', 'origin'])
+    if (strict)
+      await fetch
+    else
+      await fetch.catch(() => {})
     fetchedAt.set(repo, Date.now())
   }
   const ref = wantRef || (await sh('git', ['-C', W, 'rev-parse', '--abbrev-ref', 'origin/HEAD']).catch(() => 'origin/main')).trim()
@@ -1083,9 +1089,70 @@ function writeRepoConfig(repo, patch) {
     if (k === 'auto' && v && typeof v === 'object')
       rc.auto = Object.fromEntries(AUTO_FIELDS.map(f => [f, f in v ? !!v[f] : !!rc.auto?.[f]]))
   }
+  // GitHub reports merge timestamps at second precision.
+  if (patch.docReview === true)
+    rc.docReviewSince ||= Math.ceil(Date.now() / 1000) * 1000
+  if (patch.docReview === false)
+    delete rc.docReviewSince
   c.repos = { ...(c.repos || {}), [repo]: rc }
   fs.writeFileSync(CONFIG, JSON.stringify(c, null, 2))
   return rc
+}
+
+// ---------- проверка документации после слияния ----------
+function announceDocReview(repo) {
+  broadcast({ type: 'doc-review', repo })
+}
+const docReview = createDocReview({
+  stateFile: path.join(DATA, 'doc-review.json'),
+  settings: repo => readConfig().repos?.[repo] || {},
+  updated: announceDocReview,
+  async github(repo, endpoint, { page, perPage, body } = {}) {
+    let resource = `repos/${repo}`
+    if (endpoint)
+      resource += `/${endpoint}`
+    if (body)
+      return ghJson('POST', resource, body)
+    if (page) {
+      const separator = resource.includes('?')
+        ? '&'
+        : '?'
+      resource += `${separator}page=${page}&per_page=${perPage}`
+    }
+    return JSON.parse(await sh('gh', ['api', resource]))
+  },
+  async baseTree(repo, base) {
+    const { W, sha } = await baseRef(repo, true, `refs/remotes/origin/${base}`, { strict: true })
+    const git = args => sh('git', ['-C', W, ...args])
+    const names = await git(['ls-tree', '-rz', '--name-only', sha])
+    const files = new Set(names.split('\0').filter(Boolean))
+    return {
+      list: () => [...files],
+      async read(file, { optional = false, ref = sha } = {}) {
+        if (optional) {
+          const exists = ref === sha
+            ? files.has(file)
+            : await git([
+                'ls-tree',
+                '-r',
+                '--name-only',
+                ref,
+                '--',
+                `:(literal)${file}`,
+              ])
+          if (!exists)
+            return null
+        }
+        return git(['cat-file', 'blob', `${ref}:${file}`])
+      },
+    }
+  },
+})
+function scanDocumentation() {
+  for (const [repo, rc] of Object.entries(readConfig().repos || {})) {
+    if (isRepo(repo) && rc.docReviewSince)
+      void docReview.scan(repo)
+  }
 }
 
 // ---------- правила владельца: rules/_global.md и rules/<owner>__<repo>.md ----------
@@ -1713,11 +1780,43 @@ const server = http.createServer(async (req, res) => {
   if (p === '/api/repo-settings' && req.method === 'GET')
     return json(res, { settings: readConfig().repos?.[repoOf(url.searchParams.get('repo'))] || {} })
   if (p === '/api/repo-settings' && req.method === 'POST') {
-    const b = await body(req)
-    const rc = writeRepoConfig(repoOf(b.repo), b)
+    const b = (await body(req)) ?? {}
+    const repo = repoOf(b.repo)
+    const rc = writeRepoConfig(repo, b)
     if (b.auto)
       setTimeout(() => autoTick(true), 1000)
+    if (typeof b.docReview === 'boolean' || typeof b.base === 'string') {
+      announceDocReview(repo)
+      if (isRepo(repo) && rc.docReviewSince)
+        void docReview.scan(repo)
+    }
+    if (b.docReview === true) {
+      const activationDelay = rc.docReviewSince - Date.now()
+      if (activationDelay > 0)
+        await new Promise(resolve => setTimeout(resolve, activationDelay))
+    }
     return json(res, { settings: rc })
+  }
+  if (p === '/api/doc-review' && req.method === 'GET') {
+    const repo = url.searchParams.get('repo')
+    if (!isRepo(repo))
+      return json(res, { error: 'Укажите репозиторий' }, 400)
+    return json(res, docReview.status(repo))
+  }
+  if (p === '/api/doc-review/issue' && req.method === 'POST') {
+    const { repo, id } = (await body(req)) ?? {}
+    if (!isRepo(repo) || typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id))
+      return json(res, { error: 'Укажите репозиторий и находку' }, 400)
+    try {
+      const issue = await docReview.publish(repo, id)
+      if (!issue)
+        return json(res, { error: 'Находка не найдена' }, 404)
+      ghCache.delete(repo)
+      return json(res, { issue })
+    }
+    catch {
+      return json(res, { error: 'Не удалось создать issue на GitHub. Попробуйте ещё раз.' }, 502)
+    }
   }
   // авторабота: журнал
   if (p === '/api/auto' && req.method === 'GET')
@@ -2105,7 +2204,12 @@ ${ARCH_FORMAT}`,
 })
 
 repoList() // список репозиториев — заранее, чтобы панель открывалась сразу
-server.listen(PORT, '127.0.0.1', () => { console.log(`bot ui: http://127.0.0.1:${PORT}`); next() })
+server.listen(PORT, '127.0.0.1', () => {
+  process.stdout.write(`bot ui: http://127.0.0.1:${PORT}\n`)
+  scanDocumentation()
+  setInterval(scanDocumentation, 60000)
+  next()
+})
 process.on('SIGTERM', () => {
   try {
     if (current)
