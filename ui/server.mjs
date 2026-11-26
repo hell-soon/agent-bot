@@ -7,6 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
 import { FORMAT as ARCH_FORMAT, scan as archScan } from './arch-scan.mjs'
+import { codeGraph } from './code-graph.mjs'
 import * as skills from './skills.mjs'
 
 const PORT = 4545
@@ -75,28 +76,61 @@ function collectOut(run, since) {
 }
 // ---------- схема архитектуры: чтение из git базовой ветки (рабочая копия бота может быть на чужой ветке) ----------
 const archCache = new Map() // repo → { sha, data }
+const codeCache = new Map() // repo → { sha, graph }
 const sh = (cmd, args, opts = {}) => new Promise((resolve, reject) => execFile(cmd, args, { env: ENV, maxBuffer: 64 * 1024 * 1024, timeout: 60000, ...opts }, (e, out, err) => (e ? reject(new Error(String(err || e.message).trim().split('\n').pop())) : resolve(out))))
-async function archData(repo, fresh) {
+// базовая ветка репозитория в копии бота: клонировать при надобности, освежить, вернуть ref, sha и чтение из git
+const fetchedAt = new Map()
+async function baseRef(repo, fresh) {
   const W = path.join(BOT, 'work', repo.replace('/', '__'))
   if (!fs.existsSync(path.join(W, '.git')))
     await sh(AGENT, ['_status'], { env: { ...ENV, BOT_REPO: repo } }) // клонирует и настроит доступ
-  if (fresh || !archCache.has(repo))
+  if (fresh || Date.now() - (fetchedAt.get(repo) || 0) > 600000) {
     await sh('git', ['-C', W, 'fetch', '-q', 'origin']).catch(() => {})
+    fetchedAt.set(repo, Date.now())
+  }
   const ref = (await sh('git', ['-C', W, 'rev-parse', '--abbrev-ref', 'origin/HEAD']).catch(() => 'origin/main')).trim()
   const sha = (await sh('git', ['-C', W, 'rev-parse', ref])).trim()
-  const hit = archCache.get(repo)
-  if (hit && hit.sha === sha && !fresh)
-    return hit.data
-  const list = (await sh('git', ['-C', W, 'ls-tree', '-r', '--name-only', ref])).split('\n').filter(Boolean)
   const read = (f) => {
     try { return execFileSync('git', ['-C', W, 'show', `${ref}:${f}`], { env: ENV, maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }).toString() }
     catch { return null }
   }
-  const grep = await sh('git', ['-C', W, 'grep', '-I', '-o', '-E', '(https?|wss?)://[A-Za-z0-9.-]+\\.[A-Za-z]{2,}', ref, '--']).catch(() => '')
-  const urls = grep.split('\n').filter(Boolean).map((l) => {
+  const list = async () => (await sh('git', ['-C', W, 'ls-tree', '-r', '--name-only', ref])).split('\n').filter(Boolean)
+  // git grep -o по базовой ветке: строки «ref:файл:совпадение»
+  const grep = async re => (await sh('git', ['-C', W, 'grep', '-I', '-o', '-E', re, ref, '--']).catch(() => '')).split('\n').filter(Boolean).map((l) => {
     const rest = l.slice(ref.length + 1); const i = rest.indexOf(':')
-    return { file: rest.slice(0, i), url: rest.slice(i + 1) }
+    return { file: rest.slice(0, i), text: rest.slice(i + 1) }
   })
+  return { W, ref, sha, read, list, grep }
+}
+// git grep на macOS понимает только POSIX-классы: [[:space:]] вместо \s, [[:alnum:]_] вместо \w
+const IMPORT_RE = String.raw`(from|import|require\(|import\()[[:space:]]*['"][^'"]+['"]|^[[:space:]]*(from[[:space:]]+[.[:alnum:]_]+[[:space:]]+import|import[[:space:]]+[[:alnum:]_.]+)|^[[:space:]]*"[^"]+"[[:space:]]*$`
+async function codeData(repo, fresh) {
+  const g = await baseRef(repo, fresh)
+  const hit = codeCache.get(repo)
+  let graph = hit?.sha === g.sha ? hit.graph : null
+  if (!graph) {
+    const files = await g.list()
+    const lines = await g.grep(IMPORT_RE)
+    graph = codeGraph({ list: () => files, read: g.read, grep: () => lines })
+    codeCache.set(repo, { sha: g.sha, graph })
+  }
+  const bot = runs.filter(r => r.repo === repo).map(r => ({
+    id: r.id,
+    title: r.title,
+    status: r.status,
+    ai: r.ai === 'codex' ? 'codex' : 'claude',
+    at: r.endedAt || r.startedAt || r.createdAt,
+    files: editedFiles(r).map(f => f.path),
+  })).filter(r => r.files.length)
+  return { repo, ref: g.ref, sha: g.sha.slice(0, 7), ...graph, bot }
+}
+async function archData(repo, fresh) {
+  const { ref, sha, read, list: ls, grep } = await baseRef(repo, fresh)
+  const hit = archCache.get(repo)
+  if (hit && hit.sha === sha && !fresh)
+    return hit.data
+  const list = await ls()
+  const urls = (await grep(String.raw`(https?|wss?)://[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)).map(x => ({ file: x.file, url: x.text }))
   const scanned = archScan({ list: () => list, read, urls: () => urls }, repo)
   let saved = null
   const raw = read('docs/architecture.json')
@@ -1614,18 +1648,10 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': MIME[ext] || 'application/octet-stream', 'cache-control': 'max-age=86400', 'x-content-type-options': 'nosniff' })
     return fs.createReadStream(f).pipe(res)
   }
-  if (p === '/api/graph') { // граф проекта: какие файлы бот правил в каких задачах
-    const repo = repoOf(url.searchParams.get('repo'))
-    return json(res, { runs: runs.filter(r => r.repo === repo).map(r => ({
-      id: r.id,
-      title: r.title,
-      status: r.status,
-      ai: r.ai === 'codex' ? 'codex' : 'claude',
-      kind: r.kind,
-      prUrl: r.prUrl,
-      at: r.endedAt || r.startedAt || r.createdAt,
-      files: editedFiles(r),
-    })).filter(r => r.files.length) })
+
+  if (p === '/api/codegraph') { // граф кода: файлы и импорты базовой ветки + где работал бот
+    try { return json(res, await codeData(repoOf(url.searchParams.get('repo')), url.searchParams.has('fresh'))) }
+    catch (e) { return json(res, { error: e.message }, 500) }
   }
   if (p === '/api/arch') { // схема архитектуры: docs/architecture.json из базовой ветки + каркас сканера
     try { return json(res, await archData(repoOf(url.searchParams.get('repo')), url.searchParams.has('fresh'))) }
