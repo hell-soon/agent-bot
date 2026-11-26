@@ -764,6 +764,10 @@ function next() {
     env.BOT_MODE = 'idea'
   if (planning(run))
     env.BOT_MODE = 'plan'
+  else if (run.kind === 'feature')
+    env.BOT_MODE = 'feature'
+  if (run.featureBranch)
+    env.BOT_FEATURE_BRANCH = run.featureBranch
   const turnStart = Date.now()
   run.outNew = []
   const child = spawn(AGENT, args, {
@@ -906,10 +910,14 @@ function next() {
         : run.error
     }
     else if (why?.limit) { run.status = 'limited'; run.reason = why.text; run.resumeAt = why.resetAt }
-    else if (run.kind === 'issue' && (run.prUrl || run.closedIssue)) {
+    else if ((run.kind === 'issue' && run.closedIssue) || (['issue', 'feature'].includes(run.kind) && run.prUrl)) {
       run.status = 'done'
     }
     else if (why) { run.status = 'failed'; run.reason = why.text }
+    else if (run.kind === 'feature' && run.planApproved && !run.pause) {
+      run.status = 'failed'
+      run.reason = 'Бот закончил ход без открытого PR. Подробности в ленте задачи.'
+    }
     else if (CHAT.has(run.kind)) {
       run.status = run.sessionId ? 'waiting' : 'failed'
     }
@@ -2061,6 +2069,8 @@ async function handleRequest(req, res) {
 
   if (req.method === 'POST' && p === '/api/jobs') {
     const b = await body(req)
+    if (b.kind === 'idea')
+      b.kind = 'feature'
     const repo = repoOf(b.repo)
     const cfgNow = readConfig()
     let ai = ['claude', 'codex'].includes(b.ai)
@@ -2127,12 +2137,11 @@ async function handleRequest(req, res) {
       if (!b.text && !['triage', 'tickets'].includes(b.kind))
         return json(res, { error: 'Опишите задачу' }, 400)
       const names = {
-        idea: 'Фича',
         bug: 'Баг',
         triage: 'Разбор issue',
         tickets: 'Нарезать на тикеты',
         task: 'Задача',
-        feature: 'Разработка фичи',
+        feature: 'Фича',
       }
       made.push(newRun({
         kind: b.kind,
@@ -2359,7 +2368,8 @@ ${ARCH_FORMAT}`,
     if (run.board.suggestions.length)
       return json(res, { error: 'Сначала примите или отклоните предложения бота' }, 400)
     run.planApproved = true
-    run.reply = approvedPlanText(run.board, run.text)
+    run.featureBranch = `agent/feature-${run.createdAt}-${run.id}`
+    run.reply = approvedPlanText(run.board, run.text, run.featureBranch)
     run.status = 'queued'
     pushState(); next()
     return json(res, { ok: true })
@@ -2420,7 +2430,7 @@ ${ARCH_FORMAT}`,
         if (run.status === 'limited')
           run.status = 'stopped'
         const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, modelUsed, replyFiles, outSeen, outNew, codexImgs, mapDone, mapFile, fsdNew, board, planApproved, pause, ...rest } = run
-        newRun(rest)
+        newRun({ ...rest, featureBranch: undefined })
       }
     }
     else if (act === 'delete') {

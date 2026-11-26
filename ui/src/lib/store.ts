@@ -4,7 +4,7 @@ import { computed, reactive, watch } from 'vue'
 import { api, ls } from './api'
 import { aiName } from './format'
 
-export type Mode = 'task' | 'issue' | 'idea' | 'feature' | 'bug' | 'pr' | 'queue' | 'chain' | 'triage' | 'tickets'
+export type Mode = 'task' | 'issue' | 'feature' | 'bug' | 'pr' | 'queue' | 'chain' | 'triage' | 'tickets'
 export const MODES: Record<Mode, { name: string, ph?: string, hint: string, more?: boolean }> = {
   task: {
     name: 'Своими словами',
@@ -15,15 +15,10 @@ export const MODES: Record<Mode, { name: string, ph?: string, hint: string, more
     name: 'Из issue',
     hint: 'Бот создаст ветку, напишет код, проверит и откроет PR — без вопросов.',
   },
-  idea: {
-    name: 'Фича',
-    ph: 'Идея своими словами: что не устраивает, что хочется',
-    hint: 'Бот изучит код и будет спрашивать по одному. Итог — issue, которые можно отдать боту.',
-  },
   feature: {
-    name: 'Разработка фичи',
-    ph: 'Что за фича и зачем — бот соберёт план на доске',
-    hint: 'Бот построит план: шаги, зависимости, заметки. Правьте доску, принимайте его предложения — код начнётся после «Начать работу».',
+    name: 'Фича',
+    ph: 'Что нужно добавить или изменить?',
+    hint: 'Бот составит план на доске. После «Начать работу» реализует его, запустит проверки и откроет PR.',
   },
   bug: {
     name: 'Баг',
