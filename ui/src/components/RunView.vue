@@ -88,22 +88,27 @@ const canAnswer = computed(() => r.value && !['running', 'queued'].includes(r.va
 const answerText = ref('')
 const at = useAttach()
 const replyFile = ref<HTMLInputElement>()
+// Любой вопрос — можно выбрать несколько: клик/1–9 отмечает, «Ответить»/↵ отправляет; двойной клик — сразу только этот
+const curQ = ref('') // вопрос, в котором отмечали последним (для клавиш)
 function pick(it: Extract<FeedItem, { k: 'choice' }>, i: number) {
   if (it.answered || !canAnswer.value)
     return
   const cur = picks[it.key] || []
-  picks[it.key] = it.q.multi
-    ? (cur.includes(i)
-        ? cur.filter(x => x !== i)
-        : [...cur, i])
-    : [i]
-  if (!it.q.multi)
-    sendChoices()
+  picks[it.key] = cur.includes(i) ? cur.filter(x => x !== i) : [...cur, i]
+  curQ.value = it.key
+}
+function pickOnly(it: Extract<FeedItem, { k: 'choice' }>, i: number) {
+  if (it.answered || !canAnswer.value)
+    return
+  picks[it.key] = [i]
+  sendChoices()
 }
 async function sendChoices() {
   const open = openChoices.value
-  if (!open.length || open.some(c => !picks[c.key]?.length))
+  if (!open.length)
     return
+  if (open.some(c => !picks[c.key]?.length))
+    return toast('Отметьте вариант в каждом вопросе')
   const parts = open.map((c) => {
     const labels = [...picks[c.key]].sort().map(i => cleanLabel(c.q.options[i].label))
     return open.length > 1
@@ -129,9 +134,12 @@ function onKey(e: KeyboardEvent) {
   const t = e.target as HTMLElement
   if (t.closest('textarea, input, select, dialog') || e.metaKey || e.ctrlKey || e.altKey)
     return
+  if (e.key === 'Enter' && openChoices.value.some(c => picks[c.key]?.length)) {
+    e.preventDefault(); sendChoices(); return
+  }
   const n = Number(e.key); if (!n)
     return
-  const c = openChoices.value.find(x => !picks[x.key]?.length) || openChoices.value[openChoices.value.length - 1]
+  const c = openChoices.value.find(x => x.key === curQ.value) || openChoices.value.find(x => !picks[x.key]?.length) || openChoices.value[openChoices.value.length - 1]
   if (c && c.q.options[n - 1])
     pick(c, n - 1)
 }
@@ -368,8 +376,9 @@ function act(a: string) {
                 :class="{ on: isPicked(it, j) }"
                 :disabled="it.answered"
                 @click="pick(it, j)"
+                @dblclick="pickOnly(it, j)"
               >
-                <span class="k">{{ it.q.multi ? '✓' : j + 1 }}</span>
+                <span class="k">{{ isPicked(it, j) ? '✓' : j + 1 }}</span>
                 <span class="l">{{ cleanLabel(o.label) }}<span
                   v-if="isRec(o.label)"
                   class="rec"
@@ -384,11 +393,11 @@ function act(a: string) {
               v-if="!it.answered"
               class="foot"
             >
-              {{ it.q.multi ? 'Можно несколько' : 'Клавиши 1–9' }} · или ответьте своими словами<span class="spacer" />
+              Можно несколько: 1–9 — отметить, ↵ — ответить, двойной клик — сразу этот · или своими словами<span class="spacer" />
               <button
-                v-if="it.q.multi"
                 type="button"
                 class="btn primary sm"
+                :disabled="!picks[it.key]?.length || !canAnswer"
                 @click="sendChoices"
               >
                 Ответить
