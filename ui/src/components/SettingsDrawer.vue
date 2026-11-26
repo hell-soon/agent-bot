@@ -8,6 +8,7 @@ import { bothAi, enabledSkills, loadCodex, saveSetting, setAi, store, toast } fr
 import Icon from './Icon.vue'
 import SetAccess from './settings/SetAccess.vue'
 import SetNotify from './settings/SetNotify.vue'
+import SetPanelUpdate from './settings/SetPanelUpdate.vue'
 import SetPerms from './settings/SetPerms.vue'
 import SetRepo from './settings/SetRepo.vue'
 import SetRules from './settings/SetRules.vue'
@@ -33,6 +34,7 @@ const TITLES: Record<DrawerPage, string> = {
   perms: 'Разрешения',
   notify: 'Уведомления и сторож',
   access: 'Доступ на GitHub',
+  'panel-update': 'Обновление панели',
   memory: 'Память',
 }
 const repoName = computed(() => store.curRepo.split('/')[1] || '')
@@ -177,6 +179,7 @@ async function saveMem() {
         <set-perms v-else-if="store.drawer === 'perms'" />
         <set-notify v-else-if="store.drawer === 'notify'" />
         <set-access v-else-if="store.drawer === 'access'" />
+        <set-panel-update v-else-if="store.drawer === 'panel-update'" />
 
         <template v-else-if="store.drawer === 'memory'">
           <p class="small">
@@ -291,6 +294,13 @@ async function saveMem() {
                 :size="16"
               /></span>
               <span class="lbl">Уведомления и сторож<small>{{ store.cfg.tgChat ? 'Telegram подключён' : 'macOS, браузер, Telegram' }} · остановка зависших</small></span>
+              <span class="chev">›</span>
+            </button>
+            <button
+              class="nav-row"
+              @click="go('panel-update')"
+            >
+              <span class="lbl">Обновление панели</span>
               <span class="chev">›</span>
             </button>
             <button

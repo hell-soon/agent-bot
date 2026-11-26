@@ -21,7 +21,8 @@ import { pickRoutes, shoot, VIEWPORTS } from './screens.mjs'
 import * as skills from './skills.mjs'
 
 const PORT = 4545
-const BOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
+const SOURCE = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
+const BOT = process.env.BOT_PANEL_ROOT || SOURCE
 // bot.env — личные настройки (создаёт setup.sh)
 const BOT_ENV = (() => {
   const o = {}; try {
@@ -689,7 +690,7 @@ async function screensJob(run) {
 
 let wiping = false // идёт `agent.sh _wip` — копия занята, следующий запуск ждёт
 function next() {
-  if (current || mapping || wiping)
+  if (current || mapping || wiping || panelUpdatePausesQueue())
     return
   const run = runs.find(r => r.status === 'queued')
   if (!run)
@@ -974,12 +975,12 @@ function next() {
     pushState()
     notify(run)
     if (run.status === 'waiting' && hasCompanionInput)
-      postCompanionReaction(run).catch(() => console.warn('Мини-агент: не удалось получить реакцию'))
+      trackPanelWork(postCompanionReaction(run).catch(() => console.warn('Мини-агент: не удалось получить реакцию')))
     if (run.prUrl && run.status === 'done') {
-      prReport(run)
+      trackPanelWork(prReport(run)
         .then(r => r && (appendEvent(run, { type: 'bot_note', text: `${r === 'updated' ? 'Обновлён' : 'В PR —'} комментарий «Что может задеть»${run.fsdNew ? (run.fsdNew.length ? ` · новых нарушений FSD: ${run.fsdNew.length}` : ' · новых нарушений FSD нет') : ''}`, at: Date.now() }), pushState()))
-        .catch(e => console.error('pr report:', e.message))
-      screensJob(run).catch(e => console.error('screens:', e.message))
+        .catch(e => console.error('pr report:', e.message)))
+      trackPanelWork(screensJob(run).catch(e => console.error('screens:', e.message)))
     }
     next()
   })
@@ -1224,9 +1225,11 @@ const dependencies = createDependencySchedule({
 })
 
 function scanDependencies() {
+  if (panelUpdatePausesQueue())
+    return
   for (const [repo, config] of Object.entries(readConfig().repos || {})) {
     if (isRepo(repo) && config.dependencyUpdates)
-      void dependencies.tick(repo)
+      trackPanelWork(dependencies.tick(repo))
   }
 }
 
@@ -1280,9 +1283,11 @@ const docReview = createDocReview({
   },
 })
 function scanDocumentation() {
+  if (panelUpdatePausesQueue())
+    return
   for (const [repo, rc] of Object.entries(readConfig().repos || {})) {
     if (isRepo(repo) && rc.docReviewSince)
-      void docReview.scan(repo)
+      trackPanelWork(docReview.scan(repo))
   }
 }
 
@@ -1312,7 +1317,7 @@ let autoBusy = false
 async function autoTick(force = false) {
   const c = readConfig()
   const repos = Object.entries(c.repos || {}).filter(([, rc]) => AUTO_FIELDS.some(f => rc.auto?.[f]))
-  if (!repos.length || autoBusy)
+  if (!repos.length || autoBusy || panelUpdatePausesQueue())
     return
   if (!force && Date.now() - autoState.lastAt < (c.autoEvery || 5) * 60000)
     return
@@ -1738,7 +1743,7 @@ async function body(req) {
 function json(res, data, code = 200) { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)) }
 
 // Собранная панель (Vue + Vite) — ui/dist; сборка: cd ui && npm run build (bot ui делает сам)
-const DIST = path.join(BOT, 'ui', 'dist')
+const DIST = path.join(SOURCE, 'ui', 'dist')
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript',
@@ -1766,12 +1771,57 @@ function serveStatic(p, res) {
   fs.createReadStream(file).pipe(res)
 }
 
-const server = http.createServer(async (req, res) => {
+const panelUpdateState = {
+  supported: Boolean(process.send),
+  current: process.env.BOT_PANEL_COMMIT || '',
+  available: '',
+  phase: 'idle',
+  error: '',
+}
+let panelActive = !process.send
+let panelDrained = false
+const panelWork = new Set()
+let panelWrites = 0
+
+function trackPanelWork(promise) {
+  panelWork.add(promise)
+  void promise.then(() => panelWork.delete(promise), () => panelWork.delete(promise))
+}
+function panelUpdatePausesQueue() {
+  return !panelActive || ['waiting', 'restarting'].includes(panelUpdateState.phase)
+}
+function drainPanel() {
+  if (panelUpdateState.phase !== 'waiting' || panelDrained
+    || current || mapping || wiping || autoBusy || panelWork.size || panelWrites) {
+    return
+  }
+  panelDrained = true
+  pushState()
+  process.send?.({ type: 'panel-update-drained' })
+}
+
+async function handleRequest(req, res) {
   const url = new URL(req.url, 'http://x')
   const p = url.pathname
   // только с этого компьютера и только со своей страницы
   if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== `http://127.0.0.1:${PORT}`)
     return json(res, { error: 'forbidden' }, 403)
+
+  if (req.method === 'GET' && p === '/api/panel-update')
+    return json(res, panelUpdateState)
+  if (!panelActive || panelDrained)
+    return json(res, { error: 'Панель перезапускается' }, 503)
+  if (req.method === 'POST' && p === '/api/panel-update') {
+    if (!process.connected)
+      return json(res, { error: 'Запустите панель командой bot ui' }, 503)
+    if (!req.headers['content-type']?.startsWith('application/json'))
+      return json(res, { error: 'Ожидается JSON' }, 415)
+    const { action } = await body(req) || {}
+    if (action !== 'check' && action !== 'install')
+      return json(res, { error: 'Неизвестная команда обновления' }, 400)
+    process.send({ type: `panel-update-${action}` })
+    return json(res, { ok: true }, 202)
+  }
 
   if (req.method === 'GET' && !p.startsWith('/api/'))
     return serveStatic(p, res)
@@ -1927,7 +1977,7 @@ const server = http.createServer(async (req, res) => {
     if (typeof b.docReview === 'boolean' || typeof b.base === 'string') {
       announceDocReview(repo)
       if (isRepo(repo) && rc.docReviewSince)
-        void docReview.scan(repo)
+        trackPanelWork(docReview.scan(repo))
     }
     if (b.docReview === true) {
       const activationDelay = rc.docReviewSince - Date.now()
@@ -2402,16 +2452,46 @@ ${ARCH_FORMAT}`,
   }
 
   json(res, { error: 'not found' }, 404)
+}
+
+const server = http.createServer(async (req, res) => {
+  if (req.method === 'GET')
+    return handleRequest(req, res)
+  panelWrites++
+  try {
+    await handleRequest(req, res)
+  }
+  finally {
+    panelWrites--
+  }
 })
 
-repoList() // список репозиториев — заранее, чтобы панель открывалась сразу
-server.listen(PORT, '127.0.0.1', () => {
-  process.stdout.write(`bot ui: http://127.0.0.1:${PORT}\n`)
+function startPanelJobs() {
+  panelActive = true
+  repoList()
   scanDocumentation()
   scanDependencies()
   setInterval(scanDocumentation, 60000)
   setInterval(scanDependencies, 60000)
+  setInterval(drainPanel, 1000)
   next()
+}
+process.on('message', (message) => {
+  if (message.type === 'panel-update-state') {
+    Object.assign(panelUpdateState, message.state)
+    next()
+  }
+  if (message.type === 'panel-activate')
+    startPanelJobs()
+  if (message.type === 'panel-update-shutdown' && panelDrained)
+    process.exit(0)
+})
+server.listen(PORT, '127.0.0.1', () => {
+  process.stdout.write(`bot ui: http://127.0.0.1:${PORT}\n`)
+  if (process.send)
+    process.send({ type: 'panel-ready' })
+  else
+    startPanelJobs()
 })
 process.on('SIGTERM', () => {
   try {
