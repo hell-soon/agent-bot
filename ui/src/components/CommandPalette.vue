@@ -62,10 +62,10 @@ const groups = computed(() => {
         run: job({ kind: 'task', text: query }),
       },
       {
-        icon: 'idea',
-        title: 'Обсудить как фичу: ',
+        icon: 'feature',
+        title: 'Запланировать фичу: ',
         em: `«${query}»`,
-        run: job({ kind: 'idea', text: query }),
+        run: job({ kind: 'feature', text: query }),
       },
       {
         icon: 'bug',
@@ -131,15 +131,9 @@ const groups = computed(() => {
       run: go(() => newTask('issue')),
     },
     {
-      icon: 'idea',
-      title: 'Обсудить фичу…',
-      k: 'идея',
-      run: go(() => newTask('idea')),
-    },
-    {
       icon: 'feature',
-      title: 'Разработка фичи: план на доске…',
-      k: 'план доска',
+      title: 'Фича…',
+      k: 'идея план доска',
       run: go(() => newTask('feature')),
     },
     {

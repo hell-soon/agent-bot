@@ -203,10 +203,12 @@ it('порядок шагов и текст утверждённого план�
   const prep = b.items.at(-1).id
   b = ok(applyOp(b, { op: 'link', from: prep, to: 's1' }))
   assert.deepEqual(orderedSteps(b).map(s => s.title), ['Подготовка', 'API', 'UI'])
-  const t = approvedPlanText(b, 'Сделать фичу X')
+  const t = approvedPlanText(b, 'Сделать фичу X', 'agent/feature-123')
   assert.match(t, /## Исходная задача\nСделать фичу X/)
   assert.match(t, /1\. Подготовка\n2\. API \(после 1\)\n {3}Ручка \/api\/x\n3\. UI \(после 2\)/)
   assert.match(t, /## Заметки\n- Риск: старые данные/)
+  assert.match(t, /Работай в ветке agent\/feature-123/)
+  assert.match(t, /открой PR в базовую ветку/)
 })
 
 it('доска для бота — блоком plan, который снова разбирается', () => {

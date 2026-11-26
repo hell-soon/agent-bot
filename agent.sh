@@ -30,7 +30,7 @@ bot chain 5 6 7         то же, но каждое следующее — по
 bot q ready             очередь из всех открытых issue с меткой ready-for-agent
 bot pr 7                поправить PR #7 по комментариям ревью и упавшим проверкам
 bot pr 7 "текст"        поправить PR #7 как сказано
-bot idea "текст"        обсудить большую фичу (/grill-with-docs), потом /to-spec, /to-tickets
+bot feature "текст"     составить план фичи, после утверждения реализовать и открыть PR
 bot bug "текст"         разобрать баг (/diagnosing-bugs)
 bot triage              разобрать новые issue (/triage)
 bot log [N]             лог последней очереди (или issue #N)
@@ -261,7 +261,6 @@ $(head -c 5000 "$BOT_MAP")"; OPTS[1]="$PROMPT"
 fi
 
 # «Фича» (BOT_MODE=idea или bot idea): только обсуждение → спецификация → issue, код не трогать
-[ "$1" = idea ] && BOT_MODE=idea
 if [ "$BOT_MODE" = idea ]; then
   PROMPT="$PROMPT
 
@@ -273,12 +272,20 @@ if [ "$BOT_MODE" = idea ]; then
 4. В конце дай ссылки на issue. Делать их будет отдельная задача — не ты сейчас."
   OPTS[1]="$PROMPT"
 fi
+# В терминале фича проходит те же этапы, утверждение плана — в чате.
+if [ "$1" = feature ] || [ "$1" = idea ]; then
+  PROMPT="$PROMPT
+
+## Режим «Фича»
+Изучи код и представь короткий план с разумными допущениями. Дождись утверждения плана, прежде чем менять код. После утверждения реализуй план, запусти проверки проекта, закоммить и запушь ветку, открой PR. Обычные неоднозначности решай сам и опиши решения в PR."
+  OPTS[1]="$PROMPT"
+fi
 # «Разработка фичи» до утверждения плана (BOT_MODE=plan, ставит панель): план на доске, код не трогать
 if [ "$BOT_MODE" = plan ]; then
   PROMPT="$PROMPT
 
-## Режим «Разработка фичи»: сначала план, код — только после утверждения
-Сейчас идёт планирование. Файлы проекта НЕ меняй, ветки, коммиты и PR НЕ создавай. Изучай код (Read, Grep, Glob, git log) и строй план.
+## Режим «Фича»: сначала план, код — после утверждения
+До утверждения плана файлы проекта НЕ меняй, ветки, коммиты и PR НЕ создавай. Изучай код (Read, Grep, Glob, git log) и строй план. Обычные неоднозначности разрешай самостоятельно и записывай допущения на доске.
 План показывается человеку на доске: шаги, стрелки зависимостей и заметки. Каждый ответ, где план появился или изменился, заканчивай ПОЛНЫМ планом в блоке:
 \`\`\`plan
 {\"items\": [{\"id\": \"s1\", \"type\": \"step\", \"title\": \"Расширить холст\", \"text\": \"Дать доске всю доступную высоту окна, чтобы было видно больше шагов и связей\"},
@@ -455,6 +462,14 @@ finish_issue() { # $1 — номер, $2 — ветка: метки, поиск 
   git checkout -q "$BASE"
   printf '{"type":"bot_result","branch":"%s","pr":"%s"}\n' "$2" "$pr"
 }
+report_feature_pr() {
+  local br pr
+  br=${BOT_FEATURE_BRANCH:-$(git branch --show-current)}
+  [ -n "$br" ] && [ "$br" != "$BASE" ] || return 0
+  pr=$(gh pr list -R "$REPO" --head "$br" --base "$BASE" --state open --json url --jq '.[0].url' 2>/dev/null)
+  [ -n "$pr" ] && printf '{"type":"bot_result","branch":"%s","pr":"%s"}\n' "$br" "$pr"
+  return 0
+}
 start_issue_branch() { # $1 — номер, $2 — база; печатает имя ветки
   local br="agent/issue-$1"
   git fetch -q origin
@@ -496,14 +511,19 @@ case "$1" in
     git log -1 --format=%s | grep -q '^WIP бота' && git reset -q --soft HEAD~1   # вернуть незаконченное в рабочую копию
     ai_run resume 0 "$2" \
       "Работа прервалась (сбой связи или лимит). Продолжай с того места, где остановился: сначала git status и git log, чтобы понять, что уже сделано, потом доделай задачу до конца (проверки, push, PR)." || true
-    if [ -n "$4" ]; then finish_issue "$4" "$3"; else keep_wip "$3"; git checkout -q "$BASE"; printf '{"type":"bot_result","branch":"%s"}\n' "$3"; fi
+    if [ -n "$4" ]; then finish_issue "$4" "$3"; else
+      [ "$BOT_MODE" = feature ] && report_feature_pr
+      keep_wip "$3"; git checkout -q "$BASE"; printf '{"type":"bot_result","branch":"%s"}\n' "$3"
+    fi
     exit 0 ;;
   _new)    # _new "задача" — начало разговора (обсуждение, баг, разбор, свободная задача)
     setup_repo; fresh_main; model_opts
     ai_run new 1 "$2"; exit 0 ;;
   _resume) # _resume SESSION "ответ" — продолжение того же разговора (копию не сбрасываем)
     setup_repo; model_opts
-    ai_run resume 1 "$2" "$3"; exit 0 ;;
+    ai_run resume 1 "$2" "$3"
+    [ "$BOT_MODE" = feature ] && report_feature_pr
+    exit 0 ;;
   _wip)    # после остановки: незаконченное — коммитом «WIP бота» в ветку задачи, копия — снова на main
     setup_repo; br=$(git branch --show-current)
     if [ -n "$br" ] && [ "$br" != "$BASE" ]; then keep_wip "$br" >/dev/null || true; git checkout -q "$BASE" 2>/dev/null || true; echo "$br"; fi
@@ -551,7 +571,7 @@ run_queue() { # $1 = q | chain, дальше номера issue
 
 case "$1" in
   q|chain|log|ui) ;;
-  ''|pr|idea|bug|triage|*[!0-9]*) code_mode ;;
+  ''|pr|idea|feature|bug|triage|*[!0-9]*) code_mode ;;
 esac
 case "$1" in
   '')       model_opts; ai_tty ;;
@@ -560,7 +580,7 @@ case "$1" in
             gh pr checkout -R "$REPO" "$n" >/dev/null
             model_opts cheap
             ai_tty "$(pr_task "$n" "${@:3}")" ;;
-  idea)     model_opts; ai_tty "/grill-with-docs ${*:2}" ;;
+  feature|idea) model_opts; ai_tty "${*:2}" ;;
   bug)      model_opts; ai_tty "/diagnosing-bugs ${*:2}" ;;
   triage)   model_opts; ai_tty "/triage" ;;
   *[!0-9]*) model_opts; ai_tty "$*" ;;

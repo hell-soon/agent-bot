@@ -12,7 +12,13 @@ const at = useAttach()
 const fileIn = ref<HTMLInputElement>()
 const dragging = ref(false)
 const m = computed(() => MODES[c.mode])
-const MAIN: Mode[] = ['task', 'issue', 'idea', 'feature', 'bug', 'pr']
+const MAIN: Mode[] = [
+  'task',
+  'issue',
+  'feature',
+  'bug',
+  'pr',
+]
 const EXTRA: Mode[] = ['queue', 'chain', 'triage', 'tickets']
 const extraOpen = ref(false)
 const ai = ref('') // '' — как по умолчанию
@@ -87,7 +93,7 @@ async function submit() {
       return; Object.assign(b, { kind: 'pr', pr: c.prPick, text })
   }
   else {
-    if (!text && !at.atts.value.length && ['task', 'idea', 'feature', 'bug'].includes(c.mode))
+    if (!text && !at.atts.value.length && ['task', 'feature', 'bug'].includes(c.mode))
       return (err.value = 'Опишите задачу'); Object.assign(b, { kind: c.mode, text: text || 'Посмотри вложения.' })
   }
   busy.value = true
