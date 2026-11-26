@@ -101,8 +101,8 @@ export function kindIcon(k?: string) {
     ? 'bug'
     : k === 'idea'
       ? 'idea'
-      : k === 'pr'
-        ? 'pr'
+      : k === 'pr' || k === 'feature'
+        ? k
         : k === 'issue'
           ? 'issue'
           : 'task'
