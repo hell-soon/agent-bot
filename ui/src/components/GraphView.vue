@@ -13,7 +13,7 @@ import Icon from './Icon.vue'
 interface CEdge { from: string, to: string, bad?: string }
 interface BotRun { id: string, title: string, status: string, ai: string, at: number, files: string[] }
 interface Data { repo: string, ref: string, sha: string, files: string[], edges: CEdge[], fsd: { root: string, layers: string[], segmented: string[] } | null, bot: BotRun[], error?: string }
-interface GNode extends SimulationNodeDatum { id: string, label: string, files: string[], r: number, color: string, ins: number, layer: number }
+interface GNode extends SimulationNodeDatum { id: string, label: string, files: string[], r: number, color: string, ins: number, layer: number, anchor?: 'start' | 'end' | 'middle' }
 type GLink = SimulationLinkDatum<GNode> & { w: number, bad: string[] }
 
 const d = ref<Data | null>(null)
@@ -21,7 +21,7 @@ const loading = ref(false)
 const err = ref('')
 const f = reactive({ level: 'groups' as 'groups' | 'files', layout: 'layers' as 'layers' | 'net', bot: false, task: '', bad: false, q: '' })
 // настройки вида — запоминаются в браузере
-const OPT0 = { labels: 'auto' as 'auto' | 'all' | 'none', edgeAlpha: 0.16, hoverOnly: false, nodeSize: 1, spacing: 1, perRow: 9, hideOther: false }
+const OPT0 = { labels: 'auto' as 'auto' | 'all' | 'none', edgeAlpha: 0.16, hoverOnly: false, nodeSize: 1, spacing: 1, perRow: 9, hideOther: false, hideHubs: true, hubPct: 30 }
 const opt = reactive({ ...OPT0, ...(() => { try { return JSON.parse(storage.get('bot:graph') || '{}') } catch { return {} } })() })
 watch(opt, () => storage.set('bot:graph', JSON.stringify(opt)), { deep: true })
 const showOpt = ref(false)
@@ -39,7 +39,7 @@ async function load(fresh = false) {
   catch (e: any) { err.value = e.message }
   finally { loading.value = false }
 }
-watch(() => store.curRepo, () => { picked.value = null; f.task = ''; load() })
+watch(() => store.curRepo, () => { picked.value = null; fstack.value = []; f.task = ''; load() })
 
 // ---------- группы: слайс FSD или папка (большие папки дробятся глубже, пока в группе не ≤ 40 файлов) ----------
 let folderOf = new Map<string, string>()
@@ -93,13 +93,19 @@ function shortName(id: string) {
   const s = fsd && id.startsWith(fsd.root) ? id.slice(fsd.root.length) : id
   return f.level === 'files' ? s.split('/').slice(-2).join('/') : s
 }
+const SEGMENTS = new Set(['ui', 'model', 'lib', 'api', 'config', 'types', 'store', 'stores', 'utils', 'hooks', 'composables'])
 // подпись на узле: в слоях слой и так виден — только имя слайса / файла; index.* — по папке («map/index.ts» → «map»)
 function nodeLabel(n: GNode) {
   const parts = n.id.split('/')
   let t = f.layout === 'layers' && n.layer >= 0 ? parts.at(-1)! : n.label
-  if (f.level === 'files' && /^index\.[^.]+$/.test(parts.at(-1)!))
+  if (f.level === 'files' && /^index\.[^.]+$/.test(parts.at(-1)!)) {
     t = parts.at(-2) || t
-  return t.length > 18 ? `${t.slice(0, 17)}…` : t
+    // сегменты слайса (ui, model, lib…) сами по себе ни о чём не говорят — с именем слайса: «LegalPolicy/ui»
+    if (SEGMENTS.has(t) && parts.length > 2)
+      t = `${parts.at(-3)}/${t}`
+  }
+  const max = focusId.value ? 28 : 18
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t
 }
 
 // ---------- работа бота ----------
@@ -116,6 +122,54 @@ const touched = computed(() => {
 // ---------- узлы и связи ----------
 const nodes = shallowRef<GNode[]>([])
 const links = shallowRef<GLink[]>([])
+const all = shallowRef<{ byId: Map<string, GNode>, links: { a: string, b: string, w: number, bad: string[] }[] }>({ byId: new Map(), links: [] })
+const hubs = ref<string[]>([])
+// доля узлов, которые должны использовать модуль, чтобы он считался общим (у файлов — втрое меньше: их сотни)
+const hubShare = computed(() => opt.hubPct / 100 / (f.level === 'files' ? 3 : 1))
+
+// ---------- фокус: узел в центре, слева — кто использует, справа — что импортирует ----------
+const fstack = ref<string[]>([])
+const fNodes = shallowRef<GNode[]>([])
+const fLinks = shallowRef<GLink[]>([])
+const focusId = computed(() => fstack.value.at(-1) || '')
+function buildFocus() {
+  const id = focusId.value
+  const c = all.value.byId.get(id)
+  if (!c) { fNodes.value = []; fLinks.value = []; return }
+  const center: GNode = { ...c, x: 0, y: 0, fx: 0, fy: 0, anchor: 'middle', r: Math.max(c.r, 9) }
+  const ins = all.value.links.filter(l => l.b === id); const outs = all.value.links.filter(l => l.a === id)
+  const order = (a: GNode, b: GNode) => (a.layer - b.layer) || a.id.localeCompare(b.id)
+  const left = ins.map(l => all.value.byId.get(l.a)!).filter(Boolean).sort(order)
+  const leftIds = new Set(left.map(n => n.id))
+  const right = outs.map(l => all.value.byId.get(l.b)!).filter(n => n && !leftIds.has(n.id)).sort(order)
+  const PER = 18; const DY = 30; const X0 = 300; const DXC = 250
+  const place = (list: GNode[], side: -1 | 1) => list.map((n, i) => {
+    const col = Math.floor(i / PER); const inCol = Math.min(PER, list.length - col * PER)
+    const x = side * (X0 + col * DXC); const y = ((i % PER) - (inCol - 1) / 2) * DY
+    return { ...n, x, y, fx: x, fy: y, anchor: side < 0 ? 'end' : 'start', r: Math.min(n.r, 8) } as GNode
+  })
+  const ns = [center, ...place(left, -1), ...place(right, 1)]
+  const by = new Map(ns.map(n => [n.id, n]))
+  fNodes.value = ns
+  fLinks.value = [...ins, ...outs].filter(l => by.has(l.a) && by.has(l.b)).map(l => ({ source: by.get(l.a)!, target: by.get(l.b)!, w: l.w, bad: l.bad }))
+  picked.value = center
+  setTimeout(fit, 20)
+}
+function focusOn(id: string) {
+  if (focusId.value !== id)
+    fstack.value = [...fstack.value, id]
+  buildFocus()
+}
+function focusBack() {
+  fstack.value = fstack.value.slice(0, -1)
+  if (fstack.value.length)
+    buildFocus()
+  else { picked.value = null; setTimeout(fit, 20) }
+}
+function focusExit() { fstack.value = []; picked.value = null; setTimeout(fit, 20) }
+// на экране: фокус или весь граф
+const shownNodes = computed(() => (focusId.value ? fNodes.value : nodes.value))
+const shownLinks = computed(() => (focusId.value ? fLinks.value : links.value))
 let sim: Simulation<GNode, GLink> | null = null
 
 function rebuild() {
@@ -170,6 +224,15 @@ function rebuild() {
     n.ins = importers.get(n.id)?.size || 0
     n.r = ((small ? 3 : 5) + Math.sqrt(n.ins) * (small ? 1.6 : 2.4)) * opt.nodeSize
   }
+  // полный граф (с хабами) — для фокуса и панели
+  all.value = { byId: new Map(ns.map(n => [n.id, n])), links: lks.map(l => ({ a: l.source as string, b: l.target as string, w: l.w, bad: l.bad })) }
+  // хабы — модули, которые импортирует большая часть проекта: на общем графе их связи — клубок
+  hubs.value = ns.length > 12 ? ns.filter(n => n.ins / ns.length >= hubShare.value).map(n => n.id) : []
+  if (opt.hideHubs && hubs.value.length && !f.bad) {
+    const h = new Set(hubs.value)
+    ns = ns.filter(n => !h.has(n.id))
+    lks = lks.filter(l => !h.has(l.source as string) && !h.has(l.target as string))
+  }
   const first = !old.size
   sim?.stop()
   if (f.layout === 'layers') {
@@ -203,7 +266,7 @@ function rebuild() {
   if (first)
     setTimeout(fit, 1100)
 }
-watch([d, () => f.level, () => f.bad, () => f.layout, () => opt.hideOther, () => opt.nodeSize, () => opt.spacing, () => opt.perRow], rebuild)
+watch([d, () => f.level, () => f.bad, () => f.layout, () => opt.hideOther, () => opt.nodeSize, () => opt.spacing, () => opt.perRow, () => opt.hideHubs, () => opt.hubPct], () => { rebuild(); if (fstack.value.length) buildFocus() })
 
 // ---------- раскладка «Слои»: полоса на слой, ряды, порядок по соседям (меньше пересечений) ----------
 const bands = shallowRef<{ title: string, y: number, color: string }[]>([])
@@ -261,6 +324,10 @@ const bandX = computed(() => Math.min(0, ...nodes.value.map(n => n.x || 0)) - 11
 function edgePath(l: GLink) {
   const a = l.source as GNode; const b = l.target as GNode
   const x1 = a.x || 0; const y1 = a.y || 0; const x2 = b.x || 0; const y2 = b.y || 0
+  if (focusId.value) { // фокус: слева направо
+    const mx = (x1 + x2) / 2
+    return `M${x1},${y1}C${mx},${y1} ${mx},${y2} ${x2},${y2}`
+  }
   if (f.layout !== 'layers')
     return `M${x1},${y1}L${x2},${y2}`
   if (Math.abs(y1 - y2) < 8) // в одном ряду — дугой над рядом, а не по узлам
@@ -280,7 +347,15 @@ onMounted(async () => {
     ro.observe(svg.value)
   await load()
 })
-onBeforeUnmount(() => { sim?.stop(); ro?.disconnect() })
+// Esc в фокусе — шаг назад (раньше, чем общий Esc «на главную»)
+function onEsc(e: KeyboardEvent) {
+  if (e.key !== 'Escape' || !focusId.value || (e.target as HTMLElement).closest('input, textarea, select'))
+    return
+  e.stopImmediatePropagation(); e.preventDefault()
+  focusBack()
+}
+onMounted(() => window.addEventListener('keydown', onEsc, true))
+onBeforeUnmount(() => { sim?.stop(); ro?.disconnect(); window.removeEventListener('keydown', onEsc, true) })
 
 function toWorld(cx: number, cy: number) {
   const b = svg.value!.getBoundingClientRect()
@@ -318,31 +393,34 @@ function up() {
   if (drag.node) {
     if (f.layout === 'net') { drag.node.fx = null; drag.node.fy = null; sim?.alphaTarget(0) }
     if (!drag.moved)
-      picked.value = picked.value?.id === drag.node.id ? null : drag.node
+      focusOn(drag.node.id)
   }
-  else if (!drag.moved) { picked.value = null }
+  else if (!drag.moved && !focusId.value) { picked.value = null }
   drag = null
 }
 function fit() {
-  const ns = nodes.value
+  const ns = shownNodes.value
   if (!ns.length)
     return
   const xs = ns.map(n => n.x || 0); const ys = ns.map(n => n.y || 0)
-  if (f.layout === 'layers')
+  if (focusId.value) // место под подписи по бокам
+    xs.push(Math.min(...xs) - 180, Math.max(...xs) + 180)
+  else if (f.layout === 'layers')
     xs.push(bandX.value)
   const w = Math.max(...xs) - Math.min(...xs) + 160; const h = Math.max(...ys) - Math.min(...ys) + 200 // снизу — место под легенду
-  view.k = Math.min(2, Math.max(0.15, Math.min(size.w / w, size.h / h)))
-  view.x = -((Math.max(...xs) + Math.min(...xs)) / 2) * view.k; view.y = -((Math.max(...ys) + Math.min(...ys)) / 2) * view.k
+  const side = picked.value ? 340 : 0 // справа — панель узла
+  view.k = Math.min(2, Math.max(0.15, Math.min((size.w - side) / w, size.h / h)))
+  view.x = -((Math.max(...xs) + Math.min(...xs)) / 2) * view.k - side / 2; view.y = -((Math.max(...ys) + Math.min(...ys)) / 2) * view.k
 }
 
 // ---------- подсветка ----------
-const focus = computed(() => hover.value || picked.value)
+const focus = computed(() => hover.value || (focusId.value ? null : picked.value))
 const near = computed(() => {
   const n = focus.value
   if (!n)
     return null
   const s = new Set([n.id])
-  for (const l of links.value) {
+  for (const l of shownLinks.value) {
     const a = (l.source as GNode).id; const b = (l.target as GNode).id
     if (a === n.id)
       s.add(b)
@@ -355,6 +433,8 @@ const botHit = (n: GNode) => n.files.some(x => touched.value.has(x))
 const match = (n: GNode) => !f.q || n.id.toLowerCase().includes(f.q.toLowerCase())
 const dim = (n: GNode) => (near.value ? !near.value.has(n.id) : (f.bot && !botHit(n)) || (!!f.q && !match(n)))
 function showLabel(n: GNode) {
+  if (focusId.value)
+    return true
   if (opt.labels === 'none')
     return n === focus.value || n.id === picked.value?.id
   if (opt.labels === 'all')
@@ -365,14 +445,41 @@ function showLabel(n: GNode) {
     return true
   return f.level === 'groups' ? n.r > 10 * opt.nodeSize || view.k > 1.1 : n.r > 9 * opt.nodeSize || view.k > 1.6
 }
+// подписи без наложений: кандидаты по важности (выбранный, наведённый, крупные), налезающая — не ставится
+const labelSet = computed(() => {
+  const k = view.k; const fs = 11 / k
+  const cand = shownNodes.value.filter(showLabel)
+  const prio = (n: GNode) => (n.id === picked.value?.id || n === hover.value ? 1e6 : 0) + (n.id === focusId.value ? 1e6 : 0) + n.r
+  cand.sort((a, b) => prio(b) - prio(a))
+  const grid = new Map<string, number[][]>(); const C = 60 / k
+  const ok = new Set<string>()
+  for (const n of cand) {
+    const w = nodeLabel(n).length * fs * 0.62; const h = fs * 1.25
+    const x = n.x || 0; const y = n.y || 0
+    const x0 = n.anchor === 'end' ? x - n.r - 6 - w : n.anchor === 'start' ? x + n.r + 6 : x - w / 2
+    const y0 = n.anchor === 'start' || n.anchor === 'end' ? y - h / 2 : y + n.r + 2 / k
+    const box = [x0, y0, x0 + w, y0 + h]
+    const cells: string[] = []
+    for (let gx = Math.floor(box[0] / C); gx <= Math.floor(box[2] / C); gx++) {
+      for (let gy = Math.floor(box[1] / C); gy <= Math.floor(box[3] / C); gy++) cells.push(`${gx},${gy}`)
+    }
+    const hit = cells.some(c => (grid.get(c) || []).some(b => b[0] < box[2] && box[0] < b[2] && b[1] < box[3] && box[1] < b[3]))
+    if (hit && prio(n) < 1e6)
+      continue
+    ok.add(n.id)
+    for (const c of cells) grid.set(c, [...(grid.get(c) || []), box])
+  }
+  return ok
+})
 // связи бледные; ярко — только у наведённого/выбранного узла (hot) и нарушения
 const linkHot = (l: GLink) => !!focus.value && ((l.source as GNode).id === focus.value.id || (l.target as GNode).id === focus.value.id)
 // «только при наведении» прячет и нарушения — для них есть кнопка «Нарушения слоёв»
-const linkDim = (l: GLink) => (focus.value ? !linkHot(l) : f.bot || (opt.hoverOnly && !f.bad))
+const linkDim = (l: GLink) => (focus.value ? !linkHot(l) : !focusId.value && (f.bot || (opt.hoverOnly && !f.bad)))
 
 // ---------- панель и легенда ----------
-const outOf = (id: string) => links.value.filter(l => (l.source as GNode).id === id)
-const inTo = (id: string) => links.value.filter(l => (l.target as GNode).id === id)
+// панель — по полному графу (с хабами)
+const outOf = (id: string) => all.value.links.filter(l => l.a === id).map(l => ({ node: all.value.byId.get(l.b)!, w: l.w, bad: l.bad })).filter(x => x.node)
+const inTo = (id: string) => all.value.links.filter(l => l.b === id).map(l => ({ node: all.value.byId.get(l.a)!, w: l.w, bad: l.bad })).filter(x => x.node)
 const badOf = (id: string) => [...outOf(id), ...inTo(id)].flatMap(l => l.bad)
 const tasksOf = (n: GNode) => botRuns.value.filter(r => r.files.some(x => n.files.includes(x)))
 const totalBad = computed(() => (d.value?.edges || []).filter(e => e.bad).length)
@@ -385,7 +492,6 @@ const legend = computed(() => {
   return [...c].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([t]) => ({ t, color: `hsl(${hue(t)} 50% 55%)` }))
 })
 const ago = (t: number) => new Date(t).toLocaleDateString('ru', { day: 'numeric', month: 'short' })
-const nodeOf = (x: unknown) => x as GNode
 </script>
 
 <template>
@@ -530,7 +636,7 @@ const nodeOf = (x: unknown) => x as GNode
           /></marker>
         </defs>
         <g :transform="`translate(${size.w / 2 + view.x},${size.h / 2 + view.y}) scale(${view.k})`">
-          <g v-if="f.layout === 'layers'">
+          <g v-if="f.layout === 'layers' && !focusId">
             <g
               v-for="b in bands"
               :key="b.title"
@@ -551,17 +657,17 @@ const nodeOf = (x: unknown) => x as GNode
             </g>
           </g>
           <path
-            v-for="(l, i) in links"
+            v-for="(l, i) in shownLinks"
             :key="i"
             class="link"
             :class="{ dim: linkDim(l), hot: linkHot(l), bad: l.bad.length }"
             :d="edgePath(l)"
             :stroke-width="(linkHot(l) || l.bad.length ? 1.8 : Math.min(2.2, 0.6 + Math.sqrt(l.w) * 0.3)) / Math.sqrt(view.k)"
             :marker-end="linkHot(l) ? 'url(#cg-ar)' : undefined"
-            :style="linkHot(l) || linkDim(l) ? undefined : l.bad.length ? { opacity: Math.min(0.9, opt.edgeAlpha * 3.5) } : { opacity: opt.edgeAlpha }"
+            :style="linkHot(l) || linkDim(l) ? undefined : focusId ? { opacity: 0.55 } : l.bad.length ? { opacity: Math.min(0.9, opt.edgeAlpha * 3.5) } : { opacity: opt.edgeAlpha }"
           />
           <g
-            v-for="n in nodes"
+            v-for="n in shownNodes"
             :key="n.id"
             class="node"
             :class="{ dim: dim(n), sel: n.id === picked?.id, bot: f.bot && botHit(n) }"
@@ -575,20 +681,70 @@ const nodeOf = (x: unknown) => x as GNode
               :fill="n.color"
             />
             <text
-              v-if="showLabel(n)"
-              :y="n.r + 12 / view.k"
-              :font-size="11 / view.k"
+              v-if="labelSet.has(n.id)"
+              :class="{ center: n.id === focusId }"
+              :x="n.anchor === 'start' ? n.r + 6 : n.anchor === 'end' ? -n.r - 6 : 0"
+              :y="n.anchor === 'start' || n.anchor === 'end' ? 4 / view.k : n.r + (n.id === focusId ? 15 : 12) / view.k"
+              :text-anchor="n.anchor || 'middle'"
+              :font-size="(n.id === focusId ? 13 : 11) / view.k"
             >{{ nodeLabel(n) }}</text>
           </g>
         </g>
       </svg>
 
       <div
-        v-if="err || (loading && !d) || (d && !nodes.length)"
+        v-if="err || (loading && !d) || (d && !shownNodes.length)"
         class="empty"
       >
         <b>{{ err ? 'Не получилось прочитать код' : loading ? 'Читаю код…' : f.bad ? 'Нарушений нет' : 'Связей не нашлось' }}</b>
         <span class="small">{{ err || (f.bad ? 'Все импорты соблюдают правила слоёв.' : '') }}</span>
+      </div>
+
+      <div
+        v-if="focusId"
+        class="crumbs"
+        :class="{ narrow: picked }"
+      >
+        <button
+          class="btn sm"
+          @click="focusBack"
+        >
+          ← Назад
+        </button>
+        <button
+          class="btn ghost sm"
+          @click="focusExit"
+        >
+          Весь граф
+        </button>
+        <span class="path small">
+          <template
+            v-for="(x, i) in fstack"
+            :key="i"
+          ><span v-if="i"> › </span><b v-if="i === fstack.length - 1">{{ shortName(x) }}</b><a
+            v-else
+            @click="fstack = fstack.slice(0, i + 1); buildFocus()"
+          >{{ shortName(x) }}</a></template>
+        </span>
+        <span class="small hint">слева — кто использует · справа — что импортирует · клик — шаг дальше</span>
+      </div>
+      <div
+        v-else-if="hubs.length && opt.hideHubs && !f.bad"
+        class="crumbs hubs small"
+      >
+        Скрыты общие модули:
+        <a
+          v-for="h in hubs"
+          :key="h"
+          :title="'Открыть в фокусе'"
+          @click="focusOn(h)"
+        >{{ shortName(h) }}</a>
+        <button
+          class="btn ghost sm"
+          @click="opt.hideHubs = false"
+        >
+          Показать
+        </button>
       </div>
 
       <div
@@ -643,6 +799,20 @@ const nodeOf = (x: unknown) => x as GNode
           max="20"
           step="1"
         ></label>
+        <label class="row"><span>Скрыть общие модули</span><input
+          v-model="opt.hideHubs"
+          type="checkbox"
+        ></label>
+        <label
+          v-if="opt.hideHubs"
+          class="row"
+        ><span>Общий — если используют ≥ {{ Math.round(hubShare * 100) }}%</span><input
+          v-model.number="opt.hubPct"
+          type="range"
+          min="10"
+          max="70"
+          step="5"
+        ></label>
         <label
           v-if="d?.fsd"
           class="row"
@@ -692,11 +862,11 @@ const nodeOf = (x: unknown) => x as GNode
         <h4>Импортирует</h4>
         <button
           v-for="l in outOf(picked.id)"
-          :key="nodeOf(l.target).id"
+          :key="l.node.id"
           class="item"
-          @click="picked = nodeOf(l.target)"
+          @click="focusOn(l.node.id)"
         >
-          <i :style="{ background: nodeOf(l.target).color }" /><span class="t">{{ shortName(nodeOf(l.target).id) }}</span><span class="small">×{{ l.w }}</span>
+          <i :style="{ background: l.node.color }" /><span class="t">{{ shortName(l.node.id) }}</span><span class="small">×{{ l.w }}</span>
         </button>
         <span
           v-if="!outOf(picked.id).length"
@@ -705,11 +875,11 @@ const nodeOf = (x: unknown) => x as GNode
         <h4>Используют</h4>
         <button
           v-for="l in inTo(picked.id)"
-          :key="nodeOf(l.source).id"
+          :key="l.node.id"
           class="item"
-          @click="picked = nodeOf(l.source)"
+          @click="focusOn(l.node.id)"
         >
-          <i :style="{ background: nodeOf(l.source).color }" /><span class="t">{{ shortName(nodeOf(l.source).id) }}</span><span class="small">×{{ l.w }}</span>
+          <i :style="{ background: l.node.color }" /><span class="t">{{ shortName(l.node.id) }}</span><span class="small">×{{ l.w }}</span>
         </button>
         <span
           v-if="!inTo(picked.id).length"
@@ -839,9 +1009,51 @@ const nodeOf = (x: unknown) => x as GNode
     opacity: 0.04;
   }
 }
-.opts {
+.crumbs.narrow {
+  right: 344px;
+}
+.crumbs {
   position: absolute;
   top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  pointer-events: none;
+  > * {
+    pointer-events: auto;
+  }
+  .path {
+    padding: 4px 10px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--card) 90%, transparent);
+    a {
+      cursor: pointer;
+      color: var(--accent-text);
+    }
+  }
+  .hint {
+    color: var(--muted);
+  }
+  &.hubs {
+    right: auto;
+    padding: 4px 6px 4px 12px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--card) 90%, transparent);
+    border: 1px solid var(--line);
+    color: var(--muted);
+    a {
+      cursor: pointer;
+      color: var(--accent-text);
+    }
+  }
+}
+.opts {
+  position: absolute;
+  top: 56px;
   left: 12px;
   z-index: 2;
   width: 280px;
@@ -889,8 +1101,10 @@ const nodeOf = (x: unknown) => x as GNode
   }
   text {
     fill: var(--text);
-    text-anchor: middle;
     pointer-events: none;
+    &.center {
+      font-weight: 700;
+    }
     paint-order: stroke;
     stroke: var(--card);
     stroke-width: 3px;
