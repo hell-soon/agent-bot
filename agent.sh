@@ -362,6 +362,42 @@ to_codex() {
   printf '%s' "$t"
 }
 
+prepare_agent_files() {
+  local commands="" context="" rules="" survey="" answer="" branch
+  branch=$(git branch --show-current)
+  case "$branch" in ""|"$BASE"|main|master) return 0 ;; esac
+  if [ "$1" = tty ] && [ -t 0 ]; then
+    survey=$(node "$BOT_DIR/agentSetup.mjs" tty)
+    if [ -n "$survey" ]; then
+      printf '%s\n' "$survey"
+      read -r -p "Настроить инструкции агента? [y/N] " answer || answer=""
+      if [[ "$answer" = [yY] ]]; then
+        read -r -p "Команды запуска и проверки (Enter — пропустить): " commands || true
+        read -r -p "Особенности проекта (Enter — пропустить): " context || true
+        read -r -p "Правила работы (Enter — пропустить): " rules || true
+      fi
+    fi
+  fi
+  node "$BOT_DIR/agentSetup.mjs" prepare "${BOT_SETUP_COMMANDS-$commands}" "${BOT_SETUP_CONTEXT-$context}" "${BOT_SETUP_RULES-$rules}"
+}
+
+prepare_panel_branch() {
+  local branch=$1 survey
+  if [ -z "${BOT_SETUP_COMMANDS+x}" ]; then
+    survey=$(node "$BOT_DIR/agentSetup.mjs" panel)
+    if [ -n "$survey" ]; then
+      printf '%s\n' "$survey"
+      exit 0
+    fi
+  fi
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    git checkout -q "$branch"
+  else
+    git checkout -q -b "$branch" "origin/$BASE"
+  fi
+  prepare_agent_files batch
+}
+
 # Фоновый запуск в формате событий Claude (stream-json):
 #   ai_run new <panel 0|1> "задача"    |    ai_run resume <panel 0|1> SESSION "сообщение"
 ai_run() {
@@ -473,7 +509,7 @@ report_feature_pr() {
 start_issue_branch() { # $1 — номер, $2 — база; печатает имя ветки
   local br="agent/issue-$1"
   git fetch -q origin
-  git checkout -q -B "$br" "origin/$2"
+  git checkout -q -B "$br" "origin/$2" || return
   echo "$br"
 }
 
@@ -495,6 +531,7 @@ case "$1" in
       printf '{"type":"bot_result","closed":true,"text":"Issue #%s уже закрыт — делать нечего"}\n' "$2"; exit 0
     fi
     br=$(start_issue_branch "$2" "${3:-$BASE}")
+    prepare_agent_files batch
     gh issue edit "$2" -R "$REPO" --add-label in-progress --remove-label ready-for-agent >/dev/null 2>&1 || true
     ai_run new 0 "$(issue_task "$2" "$br" "${3:-$BASE}")" || true
     finish_issue "$2" "$br"; exit 0 ;;
@@ -502,6 +539,7 @@ case "$1" in
     setup_repo; fresh_main; model_opts cheap
     gh pr checkout -R "$REPO" "$2" >/dev/null
     br=$(git branch --show-current)
+    [ -z "$br" ] || [ "$br" = "$BASE" ] || prepare_agent_files batch
     ai_run new 0 "$(pr_task "$2" "${@:3}")" || true
     keep_wip "$br"; git checkout -q "$BASE"
     printf '{"type":"bot_result","branch":"%s"}\n' "$br"; exit 0 ;;
@@ -518,9 +556,16 @@ case "$1" in
     exit 0 ;;
   _new)    # _new "задача" — начало разговора (обсуждение, баг, разбор, свободная задача)
     setup_repo; fresh_main; model_opts
+    if [ -n "$BOT_TASK_BRANCH" ]; then prepare_panel_branch "$BOT_TASK_BRANCH"; fi
     ai_run new 1 "$2"; exit 0 ;;
   _resume) # _resume SESSION "ответ" — продолжение того же разговора (копию не сбрасываем)
     setup_repo; model_opts
+    if [ "$BOT_MODE" = feature ] && [ -n "$BOT_FEATURE_BRANCH" ]; then
+      if [ "$(git branch --show-current)" != "$BOT_FEATURE_BRANCH" ]; then
+        fresh_main
+      fi
+      prepare_panel_branch "$BOT_FEATURE_BRANCH"
+    fi
     ai_run resume 1 "$2" "$3"
     [ "$BOT_MODE" = feature ] && report_feature_pr
     exit 0 ;;
@@ -549,6 +594,7 @@ run_queue() { # $1 = q | chain, дальше номера issue
     local log="$LOGS/issue-$n.log" br
     echo "▶ #$n $(gh issue view "$n" -R "$REPO" --json title --jq .title)   [$(date +%H:%M)]"
     br=$(start_issue_branch "$n" "$base")
+    prepare_agent_files batch
     gh issue edit "$n" -R "$REPO" --add-label in-progress --remove-label ready-for-agent >/dev/null 2>&1 || true
     ( unset SIZE; size_model "$n" >/dev/null; OPTS=("${BASE_OPTS[@]}"); model_opts cheap
       ai_run new 0 "$(issue_task "$n" "$br" "$base")" ) > "$log" 2>&1 || true
@@ -578,6 +624,8 @@ case "$1" in
   q|chain)  m=$1; shift; [ $# -eq 0 ] && { usage; exit 1; }; run_queue "$m" "$@" ;;
   pr)       n=$2; case "$n" in ''|*[!0-9]*) usage; exit 1 ;; esac
             gh pr checkout -R "$REPO" "$n" >/dev/null
+            br=$(git branch --show-current)
+            [ -z "$br" ] || [ "$br" = "$BASE" ] || prepare_agent_files tty
             model_opts cheap
             ai_tty "$(pr_task "$n" "${@:3}")" ;;
   feature|idea) model_opts; ai_tty "${*:2}" ;;
@@ -585,5 +633,7 @@ case "$1" in
   triage)   model_opts; ai_tty "/triage" ;;
   *[!0-9]*) model_opts; ai_tty "$*" ;;
   *)        size_model "$1" >/dev/null; model_opts cheap
-            ai_tty "/implement issue #$1 (gh issue view $1). Когда готово — открой PR." ;;
+            br=$(start_issue_branch "$1" "$BASE")
+            prepare_agent_files tty
+            ai_tty "/implement issue #$1 (gh issue view $1). Работай в ветке $br. Когда готово — открой PR." ;;
 esac
