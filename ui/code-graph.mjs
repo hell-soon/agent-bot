@@ -114,7 +114,7 @@ export function codeGraph({ list, read, grep }) {
       if (m)
         to = resolveJs(file, m[1])
     }
-    if (to && to !== file)
+    if (to && to !== file && fileSet.has(to)) // в исключённые (тесты, сборки) — не считаем
       edges.set(`${file}\n${to}`, { from: file, to })
   }
 

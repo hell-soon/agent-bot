@@ -12,20 +12,25 @@ import Icon from './Icon.vue'
 
 interface CEdge { from: string, to: string, bad?: string }
 interface BotRun { id: string, title: string, status: string, ai: string, at: number, files: string[] }
-interface Data { ref: string, sha: string, files: string[], edges: CEdge[], fsd: { root: string, layers: string[], segmented: string[] } | null, bot: BotRun[], error?: string }
+interface Data { repo: string, ref: string, sha: string, files: string[], edges: CEdge[], fsd: { root: string, layers: string[], segmented: string[] } | null, bot: BotRun[], error?: string }
 interface GNode extends SimulationNodeDatum { id: string, label: string, files: string[], r: number, color: string, ins: number, layer: number }
 type GLink = SimulationLinkDatum<GNode> & { w: number, bad: string[] }
 
 const d = ref<Data | null>(null)
 const loading = ref(false)
 const err = ref('')
-const f = reactive({ level: 'groups' as 'groups' | 'files', bot: false, task: '', bad: false, q: '' })
+const f = reactive({ level: 'groups' as 'groups' | 'files', layout: 'layers' as 'layers' | 'net', bot: false, task: '', bad: false, q: '' })
 const picked = ref<GNode | null>(null)
 const hover = ref<GNode | null>(null)
 
 async function load(fresh = false) {
   loading.value = true; err.value = ''
-  try { d.value = await api<Data>(`/api/codegraph?repo=${encodeURIComponent(store.curRepo)}${fresh ? '&fresh' : ''}`) }
+  try {
+    const r = await api<Data>(`/api/codegraph?repo=${encodeURIComponent(store.curRepo)}${fresh ? '&fresh' : ''}`)
+    if (!d.value || d.value.repo !== r.repo)
+      f.layout = r.fsd ? 'layers' : 'net' // FSD — слоями, остальное — сетью
+    d.value = r
+  }
   catch (e: any) { err.value = e.message }
   finally { loading.value = false }
 }
@@ -82,6 +87,11 @@ function shortName(id: string) {
   const fsd = d.value?.fsd
   const s = fsd && id.startsWith(fsd.root) ? id.slice(fsd.root.length) : id
   return f.level === 'files' ? s.split('/').slice(-2).join('/') : s
+}
+// подпись на узле: в слоях слой и так виден — только имя слайса / файла
+function nodeLabel(n: GNode) {
+  const t = f.layout === 'layers' && n.layer >= 0 ? n.id.split('/').pop()! : n.label
+  return t.length > 18 ? `${t.slice(0, 17)}…` : t
 }
 
 // ---------- работа бота ----------
@@ -148,6 +158,22 @@ function rebuild() {
     n.r = (small ? 3 : 5) + Math.sqrt(n.ins) * (small ? 1.6 : 2.4)
   }
   const first = !old.size
+  sim?.stop()
+  if (f.layout === 'layers') {
+    // без силовой раскладки концы связей остаются id — заменить на узлы
+    const byId = new Map(ns.map(n => [n.id, n]))
+    for (const l of lks) {
+      l.source = byId.get(typeof l.source === 'string' ? l.source : (l.source as GNode).id)!
+      l.target = byId.get(typeof l.target === 'string' ? l.target : (l.target as GNode).id)!
+    }
+    lks = lks.filter(l => l.source && l.target)
+    layoutLayers(ns, lks)
+    nodes.value = ns; links.value = lks
+    setTimeout(fit, 30)
+    return
+  }
+  bands.value = []
+  for (const n of ns) { n.fx = null; n.fy = null }
   nodes.value = ns; links.value = lks
   const fsd = !!data.fsd
   const layers = data.fsd?.layers.length || 6
@@ -164,7 +190,70 @@ function rebuild() {
   if (first)
     setTimeout(fit, 1100)
 }
-watch([d, () => f.level, () => f.bad], rebuild)
+watch([d, () => f.level, () => f.bad, () => f.layout], rebuild)
+
+// ---------- раскладка «Слои»: полоса на слой, ряды, порядок по соседям (меньше пересечений) ----------
+const bands = shallowRef<{ title: string, y: number, color: string }[]>([])
+function layoutLayers(ns: GNode[], lks: GLink[]) {
+  const small = f.level === 'files'
+  const DX = small ? 110 : 168; const DY = small ? 50 : 62; const GAP = small ? 70 : 80; const PER = small ? 14 : 9
+  const fsd = d.value?.fsd
+  const rows = new Map<number, GNode[]>()
+  for (const n of ns) rows.set(n.layer, [...(rows.get(n.layer) || []), n])
+  const keys = [...rows.keys()].sort((a, b) => (a < 0 ? 1 : b < 0 ? -1 : a - b)) // вне слоёв — внизу
+  const nb = new Map<string, string[]>()
+  for (const l of lks) {
+    const a = (l.source as GNode).id; const b = (l.target as GNode).id
+    nb.set(a, [...(nb.get(a) || []), b]); nb.set(b, [...(nb.get(b) || []), a])
+  }
+  const xOf = new Map<string, number>()
+  const place = () => {
+    for (const k of keys) {
+      const row = rows.get(k)!
+      row.forEach((n, i) => xOf.set(n.id, (i % PER) - (Math.min(PER, row.length) - 1) / 2))
+    }
+  }
+  for (const k of keys) rows.get(k)!.sort((a, b) => b.ins - a.ins || a.id.localeCompare(b.id))
+  place()
+  for (let pass = 0; pass < 4; pass++) { // по соседям: вниз, потом вверх
+    for (const k of pass % 2 ? [...keys].reverse() : keys) {
+      const row = rows.get(k)!
+      const score = (n: GNode) => {
+        const xs = (nb.get(n.id) || []).map(x => xOf.get(x)).filter((x): x is number => x !== undefined)
+        return xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0
+      }
+      row.sort((a, b) => score(a) - score(b))
+      place()
+    }
+  }
+  let y = 0
+  const out: typeof bands.value = []
+  for (const k of keys) {
+    const row = rows.get(k)!
+    const lines = Math.ceil(row.length / PER)
+    out.push({ title: k >= 0 && fsd ? bare(fsd.layers[k]) : 'вне слоёв', y, color: k >= 0 && fsd ? layerColor(fsd.layers[k]) : 'var(--muted)' })
+    row.forEach((n, i) => {
+      const line = Math.floor(i / PER)
+      const inLine = Math.min(PER, row.length - line * PER)
+      n.x = n.fx = ((i % PER) - (inLine - 1) / 2) * DX + (line % 2 ? DX / 4 : 0)
+      n.y = n.fy = y + line * DY
+    })
+    y += (lines - 1) * DY + DY + GAP
+  }
+  bands.value = out
+}
+const bandX = computed(() => Math.min(0, ...nodes.value.map(n => n.x || 0)) - 110)
+// связь: в слоях — плавная дуга сверху вниз, в сети — прямая
+function edgePath(l: GLink) {
+  const a = l.source as GNode; const b = l.target as GNode
+  const x1 = a.x || 0; const y1 = a.y || 0; const x2 = b.x || 0; const y2 = b.y || 0
+  if (f.layout !== 'layers')
+    return `M${x1},${y1}L${x2},${y2}`
+  if (Math.abs(y1 - y2) < 8) // в одном ряду — дугой над рядом, а не по узлам
+    return `M${x1},${y1}Q${(x1 + x2) / 2},${y1 - 24 - Math.abs(x2 - x1) * 0.18} ${x2},${y2}`
+  const my = (y1 + y2) / 2
+  return `M${x1},${y1}C${x1},${my} ${x2},${my} ${x2},${y2}`
+}
 
 // ---------- вид ----------
 const svg = ref<SVGSVGElement>()
@@ -193,7 +282,7 @@ let drag: { node?: GNode, sx: number, sy: number, vx: number, vy: number, moved:
 function down(e: PointerEvent, node?: GNode) {
   (e.currentTarget as Element).setPointerCapture?.(e.pointerId)
   drag = { node, sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y, moved: false }
-  if (node) { node.fx = node.x; node.fy = node.y; sim?.alphaTarget(0.3).restart() }
+  if (node && f.layout === 'net') { node.fx = node.x; node.fy = node.y; sim?.alphaTarget(0.3).restart() }
   e.stopPropagation()
 }
 function move(e: PointerEvent) {
@@ -202,8 +291,10 @@ function move(e: PointerEvent) {
   if (Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) > 3)
     drag.moved = true
   if (drag.node) {
-    const p = toWorld(e.clientX, e.clientY)
-    drag.node.fx = p.x; drag.node.fy = p.y
+    if (f.layout === 'net') {
+      const p = toWorld(e.clientX, e.clientY)
+      drag.node.fx = p.x; drag.node.fy = p.y
+    }
   }
   else { view.x = drag.vx + e.clientX - drag.sx; view.y = drag.vy + e.clientY - drag.sy }
 }
@@ -211,7 +302,7 @@ function up() {
   if (!drag)
     return
   if (drag.node) {
-    drag.node.fx = null; drag.node.fy = null; sim?.alphaTarget(0)
+    if (f.layout === 'net') { drag.node.fx = null; drag.node.fy = null; sim?.alphaTarget(0) }
     if (!drag.moved)
       picked.value = picked.value?.id === drag.node.id ? null : drag.node
   }
@@ -223,7 +314,9 @@ function fit() {
   if (!ns.length)
     return
   const xs = ns.map(n => n.x || 0); const ys = ns.map(n => n.y || 0)
-  const w = Math.max(...xs) - Math.min(...xs) + 140; const h = Math.max(...ys) - Math.min(...ys) + 140
+  if (f.layout === 'layers')
+    xs.push(bandX.value)
+  const w = Math.max(...xs) - Math.min(...xs) + 160; const h = Math.max(...ys) - Math.min(...ys) + 200 // снизу — место под легенду
   view.k = Math.min(2, Math.max(0.15, Math.min(size.w / w, size.h / h)))
   view.x = -((Math.max(...xs) + Math.min(...xs)) / 2) * view.k; view.y = -((Math.max(...ys) + Math.min(...ys)) / 2) * view.k
 }
@@ -248,11 +341,15 @@ const botHit = (n: GNode) => n.files.some(x => touched.value.has(x))
 const match = (n: GNode) => !f.q || n.id.toLowerCase().includes(f.q.toLowerCase())
 const dim = (n: GNode) => (near.value ? !near.value.has(n.id) : (f.bot && !botHit(n)) || (!!f.q && !match(n)))
 function showLabel(n: GNode) {
+  if (f.layout === 'layers')
+    return true
   if (n === focus.value || near.value?.has(n.id) || (f.q && match(n)) || (f.bot && botHit(n)))
     return true
   return f.level === 'groups' ? n.r > 10 || view.k > 1.1 : n.r > 9 || view.k > 1.8
 }
-const linkDim = (l: GLink) => (focus.value ? (l.source as GNode).id !== focus.value.id && (l.target as GNode).id !== focus.value.id : f.bot)
+// связи бледные; ярко — только у наведённого/выбранного узла (hot) и нарушения
+const linkHot = (l: GLink) => !!focus.value && ((l.source as GNode).id === focus.value.id || (l.target as GNode).id === focus.value.id)
+const linkDim = (l: GLink) => (focus.value ? !linkHot(l) : f.bot)
 
 // ---------- панель и легенда ----------
 const outOf = (id: string) => links.value.filter(l => (l.source as GNode).id === id)
@@ -318,6 +415,23 @@ const nodeOf = (x: unknown) => x as GNode
           @click="f.level = 'files'"
         >
           Файлы
+        </button>
+      </div>
+      <div class="seg">
+        <button
+          :class="{ on: f.layout === 'layers' }"
+          :disabled="!d?.fsd"
+          :title="d?.fsd ? 'Слои FSD полосами' : 'Только для FSD'"
+          @click="f.layout = 'layers'"
+        >
+          Слои
+        </button>
+        <button
+          :class="{ on: f.layout === 'net' }"
+          title="Сеть, как в Obsidian: узлы можно таскать"
+          @click="f.layout = 'net'"
+        >
+          Сеть
         </button>
       </div>
       <button
@@ -387,17 +501,34 @@ const nodeOf = (x: unknown) => x as GNode
           /></marker>
         </defs>
         <g :transform="`translate(${size.w / 2 + view.x},${size.h / 2 + view.y}) scale(${view.k})`">
-          <line
+          <g v-if="f.layout === 'layers'">
+            <g
+              v-for="b in bands"
+              :key="b.title"
+              class="band"
+            >
+              <line
+                :x1="bandX - 10"
+                :x2="-bandX + 10"
+                :y1="b.y - 34"
+                :y2="b.y - 34"
+              />
+              <text
+                :x="bandX"
+                :y="b.y + 4"
+                :fill="b.color"
+                :font-size="12 / Math.sqrt(view.k)"
+              >{{ b.title }}</text>
+            </g>
+          </g>
+          <path
             v-for="(l, i) in links"
             :key="i"
             class="link"
-            :class="{ dim: linkDim(l), bad: l.bad.length }"
-            :x1="nodeOf(l.source).x"
-            :y1="nodeOf(l.source).y"
-            :x2="nodeOf(l.target).x"
-            :y2="nodeOf(l.target).y"
-            :stroke-width="(l.bad.length ? 2 : Math.min(3, 0.6 + Math.sqrt(l.w) * 0.35)) / Math.sqrt(view.k)"
-            :marker-end="focus && !linkDim(l) ? 'url(#cg-ar)' : undefined"
+            :class="{ dim: linkDim(l), hot: linkHot(l), bad: l.bad.length }"
+            :d="edgePath(l)"
+            :stroke-width="(linkHot(l) || l.bad.length ? 1.8 : Math.min(2.2, 0.6 + Math.sqrt(l.w) * 0.3)) / Math.sqrt(view.k)"
+            :marker-end="linkHot(l) ? 'url(#cg-ar)' : undefined"
           />
           <g
             v-for="n in nodes"
@@ -417,7 +548,7 @@ const nodeOf = (x: unknown) => x as GNode
               v-if="showLabel(n)"
               :y="n.r + 12 / view.k"
               :font-size="11 / view.k"
-            >{{ n.label }}</text>
+            >{{ nodeLabel(n) }}</text>
           </g>
         </g>
       </svg>
@@ -595,14 +726,33 @@ const nodeOf = (x: unknown) => x as GNode
   fill: var(--muted);
 }
 .link {
-  stroke: color-mix(in srgb, var(--muted) 40%, transparent);
+  fill: none;
+  stroke: var(--muted);
+  opacity: 0.16;
   transition: opacity 0.15s;
   &.bad {
     stroke: var(--bad);
+    opacity: 0.55;
+  }
+  &.hot {
+    stroke: var(--accent);
     opacity: 0.9;
   }
   &.dim {
-    opacity: 0.08;
+    opacity: 0.04;
+  }
+}
+.band {
+  line {
+    stroke: var(--line);
+    stroke-dasharray: 3 5;
+  }
+  text {
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-anchor: end;
+    dominant-baseline: middle;
   }
 }
 .node {
