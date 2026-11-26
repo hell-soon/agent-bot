@@ -5,7 +5,7 @@
 import type { Simulation, SimulationLinkDatum, SimulationNodeDatum } from 'd3-force'
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY } from 'd3-force'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, triggerRef, watch } from 'vue'
-import { api } from '../lib/api'
+import { api, ls as storage } from '../lib/api'
 import { STATUS } from '../lib/format'
 import { goHome, select, store } from '../lib/store'
 import Icon from './Icon.vue'
@@ -20,6 +20,11 @@ const d = ref<Data | null>(null)
 const loading = ref(false)
 const err = ref('')
 const f = reactive({ level: 'groups' as 'groups' | 'files', layout: 'layers' as 'layers' | 'net', bot: false, task: '', bad: false, q: '' })
+// настройки вида — запоминаются в браузере
+const OPT0 = { labels: 'auto' as 'auto' | 'all' | 'none', edgeAlpha: 0.16, hoverOnly: false, nodeSize: 1, spacing: 1, perRow: 9, hideOther: false }
+const opt = reactive({ ...OPT0, ...(() => { try { return JSON.parse(storage.get('bot:graph') || '{}') } catch { return {} } })() })
+watch(opt, () => storage.set('bot:graph', JSON.stringify(opt)), { deep: true })
+const showOpt = ref(false)
 const picked = ref<GNode | null>(null)
 const hover = ref<GNode | null>(null)
 
@@ -88,9 +93,12 @@ function shortName(id: string) {
   const s = fsd && id.startsWith(fsd.root) ? id.slice(fsd.root.length) : id
   return f.level === 'files' ? s.split('/').slice(-2).join('/') : s
 }
-// подпись на узле: в слоях слой и так виден — только имя слайса / файла
+// подпись на узле: в слоях слой и так виден — только имя слайса / файла; index.* — по папке («map/index.ts» → «map»)
 function nodeLabel(n: GNode) {
-  const t = f.layout === 'layers' && n.layer >= 0 ? n.id.split('/').pop()! : n.label
+  const parts = n.id.split('/')
+  let t = f.layout === 'layers' && n.layer >= 0 ? parts.at(-1)! : n.label
+  if (f.level === 'files' && /^index\.[^.]+$/.test(parts.at(-1)!))
+    t = parts.at(-2) || t
   return t.length > 18 ? `${t.slice(0, 17)}…` : t
 }
 
@@ -147,6 +155,11 @@ function rebuild() {
     const linked = new Set(lks.flatMap(l => [l.source as string, l.target as string]))
     ns = ns.filter(n => linked.has(n.id))
   }
+  if (opt.hideOther && data.fsd) { // скрыть «вне слоёв»
+    ns = ns.filter(n => n.layer >= 0)
+    const keep = new Set(ns.map(n => n.id))
+    lks = lks.filter(l => keep.has(l.source as string) && keep.has(l.target as string))
+  }
   if (f.bad) {
     lks = lks.filter(l => l.bad.length)
     const keep = new Set(lks.flatMap(l => [l.source as string, l.target as string]))
@@ -155,7 +168,7 @@ function rebuild() {
   const small = f.level === 'files'
   for (const n of ns) {
     n.ins = importers.get(n.id)?.size || 0
-    n.r = (small ? 3 : 5) + Math.sqrt(n.ins) * (small ? 1.6 : 2.4)
+    n.r = ((small ? 3 : 5) + Math.sqrt(n.ins) * (small ? 1.6 : 2.4)) * opt.nodeSize
   }
   const first = !old.size
   sim?.stop()
@@ -179,8 +192,8 @@ function rebuild() {
   const layers = data.fsd?.layers.length || 6
   sim?.stop()
   sim = forceSimulation<GNode, GLink>(ns)
-    .force('link', forceLink<GNode, GLink>(lks).id(x => x.id).distance(small ? 40 : 110).strength(small ? 0.2 : 0.08))
-    .force('charge', forceManyBody<GNode>().strength(x => -(small ? 30 : 260) - x.r * (small ? 4 : 10)))
+    .force('link', forceLink<GNode, GLink>(lks).id(x => x.id).distance((small ? 40 : 110) * opt.spacing).strength(small ? 0.2 : 0.08))
+    .force('charge', forceManyBody<GNode>().strength(x => (-(small ? 30 : 260) - x.r * (small ? 4 : 10)) * opt.spacing))
     .force('center', forceCenter(0, 0))
     .force('x', forceX(0).strength(0.03))
     // FSD: слои полосами сверху вниз (app → shared)
@@ -190,13 +203,14 @@ function rebuild() {
   if (first)
     setTimeout(fit, 1100)
 }
-watch([d, () => f.level, () => f.bad, () => f.layout], rebuild)
+watch([d, () => f.level, () => f.bad, () => f.layout, () => opt.hideOther, () => opt.nodeSize, () => opt.spacing, () => opt.perRow], rebuild)
 
 // ---------- раскладка «Слои»: полоса на слой, ряды, порядок по соседям (меньше пересечений) ----------
 const bands = shallowRef<{ title: string, y: number, color: string }[]>([])
 function layoutLayers(ns: GNode[], lks: GLink[]) {
   const small = f.level === 'files'
-  const DX = small ? 110 : 168; const DY = small ? 50 : 62; const GAP = small ? 70 : 80; const PER = small ? 14 : 9
+  const sp = opt.spacing
+  const DX = (small ? 110 : 168) * sp; const DY = (small ? 50 : 62) * sp; const GAP = (small ? 70 : 80) * sp; const PER = Math.max(3, Math.round(small ? opt.perRow * 1.6 : opt.perRow))
   const fsd = d.value?.fsd
   const rows = new Map<number, GNode[]>()
   for (const n of ns) rows.set(n.layer, [...(rows.get(n.layer) || []), n])
@@ -341,15 +355,20 @@ const botHit = (n: GNode) => n.files.some(x => touched.value.has(x))
 const match = (n: GNode) => !f.q || n.id.toLowerCase().includes(f.q.toLowerCase())
 const dim = (n: GNode) => (near.value ? !near.value.has(n.id) : (f.bot && !botHit(n)) || (!!f.q && !match(n)))
 function showLabel(n: GNode) {
-  if (f.layout === 'layers')
+  if (opt.labels === 'none')
+    return n === focus.value || n.id === picked.value?.id
+  if (opt.labels === 'all')
+    return true
+  if (f.layout === 'layers' && f.level === 'groups') // авто: слайсы — все, файлы — крупные и при приближении
     return true
   if (n === focus.value || near.value?.has(n.id) || (f.q && match(n)) || (f.bot && botHit(n)))
     return true
-  return f.level === 'groups' ? n.r > 10 || view.k > 1.1 : n.r > 9 || view.k > 1.8
+  return f.level === 'groups' ? n.r > 10 * opt.nodeSize || view.k > 1.1 : n.r > 9 * opt.nodeSize || view.k > 1.6
 }
 // связи бледные; ярко — только у наведённого/выбранного узла (hot) и нарушения
 const linkHot = (l: GLink) => !!focus.value && ((l.source as GNode).id === focus.value.id || (l.target as GNode).id === focus.value.id)
-const linkDim = (l: GLink) => (focus.value ? !linkHot(l) : f.bot)
+// «только при наведении» прячет и нарушения — для них есть кнопка «Нарушения слоёв»
+const linkDim = (l: GLink) => (focus.value ? !linkHot(l) : f.bot || (opt.hoverOnly && !f.bad))
 
 // ---------- панель и легенда ----------
 const outOf = (id: string) => links.value.filter(l => (l.source as GNode).id === id)
@@ -470,6 +489,16 @@ const nodeOf = (x: unknown) => x as GNode
       <span class="spacer" />
       <button
         class="btn ghost sm"
+        :class="{ on: showOpt }"
+        @click="showOpt = !showOpt"
+      >
+        <icon
+          name="gear"
+          :size="14"
+        />Вид
+      </button>
+      <button
+        class="btn ghost sm"
         @click="fit"
       >
         Вписать
@@ -529,6 +558,7 @@ const nodeOf = (x: unknown) => x as GNode
             :d="edgePath(l)"
             :stroke-width="(linkHot(l) || l.bad.length ? 1.8 : Math.min(2.2, 0.6 + Math.sqrt(l.w) * 0.3)) / Math.sqrt(view.k)"
             :marker-end="linkHot(l) ? 'url(#cg-ar)' : undefined"
+            :style="linkHot(l) || linkDim(l) ? undefined : l.bad.length ? { opacity: Math.min(0.9, opt.edgeAlpha * 3.5) } : { opacity: opt.edgeAlpha }"
           />
           <g
             v-for="n in nodes"
@@ -559,6 +589,73 @@ const nodeOf = (x: unknown) => x as GNode
       >
         <b>{{ err ? 'Не получилось прочитать код' : loading ? 'Читаю код…' : f.bad ? 'Нарушений нет' : 'Связей не нашлось' }}</b>
         <span class="small">{{ err || (f.bad ? 'Все импорты соблюдают правила слоёв.' : '') }}</span>
+      </div>
+
+      <div
+        v-if="showOpt"
+        class="opts"
+      >
+        <div class="row">
+          <span>Подписи</span>
+          <div class="seg">
+            <button
+              v-for="[v, l] in ([['auto', 'Авто'], ['all', 'Все'], ['none', 'Нет']] as const)"
+              :key="v"
+              :class="{ on: opt.labels === v }"
+              @click="opt.labels = v"
+            >
+              {{ l }}
+            </button>
+          </div>
+        </div>
+        <label class="row"><span>Яркость связей</span><input
+          v-model.number="opt.edgeAlpha"
+          type="range"
+          min="0.03"
+          max="0.6"
+          step="0.01"
+        ></label>
+        <label class="row"><span>Связи только при наведении</span><input
+          v-model="opt.hoverOnly"
+          type="checkbox"
+        ></label>
+        <label class="row"><span>Размер узлов</span><input
+          v-model.number="opt.nodeSize"
+          type="range"
+          min="0.5"
+          max="2"
+          step="0.1"
+        ></label>
+        <label class="row"><span>Расстояние</span><input
+          v-model.number="opt.spacing"
+          type="range"
+          min="0.6"
+          max="2.2"
+          step="0.1"
+        ></label>
+        <label
+          v-if="f.layout === 'layers'"
+          class="row"
+        ><span>Узлов в ряду · {{ f.level === 'files' ? Math.round(opt.perRow * 1.6) : opt.perRow }}</span><input
+          v-model.number="opt.perRow"
+          type="range"
+          min="3"
+          max="20"
+          step="1"
+        ></label>
+        <label
+          v-if="d?.fsd"
+          class="row"
+        ><span>Скрыть «вне слоёв»</span><input
+          v-model="opt.hideOther"
+          type="checkbox"
+        ></label>
+        <button
+          class="btn ghost sm"
+          @click="Object.assign(opt, OPT0)"
+        >
+          Сбросить
+        </button>
       </div>
 
       <div
@@ -740,6 +837,34 @@ const nodeOf = (x: unknown) => x as GNode
   }
   &.dim {
     opacity: 0.04;
+  }
+}
+.opts {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  width: 280px;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  font-size: 12.5px;
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  input[type='range'] {
+    width: 120px;
+    accent-color: var(--accent);
+  }
+  .btn {
+    justify-self: start;
   }
 }
 .band {
