@@ -2,7 +2,7 @@
 import type { Mark, Sketch } from './SketchFrame.vue'
 // Мини-доска «Разработки фичи»: шаги, заметки, стрелки зависимостей и предложения бота.
 // Доска живёт на сервере (run.board, логика — featurePlan.mjs); здесь — показ и действия через /api/runs/:id/board.
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { api } from '../lib/api'
 import { toast } from '../lib/store'
 import SketchFrame from './SketchFrame.vue'
@@ -28,8 +28,21 @@ const board = computed<Board>(() => {
     ? local.value
     : srv
 })
-const locked = computed(() => !!props.run.planApproved)
+// вопрос бота во время разработки — пауза: доска снова открыта и редактируется до «Продолжить работу»
+const paused = computed(() => !!props.run.pause)
+const locked = computed(() => !!props.run.planApproved && !paused.value)
 const thinking = computed(() => ['running', 'queued'].includes(props.run.status))
+// утверждённый план можно свернуть; на паузе доска раскрывается сама
+const root = ref<HTMLElement>()
+const shown = ref(!props.run.planApproved)
+const open = computed(() => !locked.value || shown.value)
+watch(paused, async (p) => {
+  if (!p)
+    return
+  shown.value = true
+  await nextTick()
+  root.value?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+})
 const canAsk = computed(() => !!props.run.sessionId && !thinking.value && !locked.value)
 const steps = computed(() => board.value.items.filter(i => i.type === 'step').length)
 
@@ -376,6 +389,40 @@ async function approve() {
   catch (e: any) { toast(e.message) }
   finally { approving.value = false }
 }
+// ---------- вопрос бота и «Продолжить работу» ----------
+const answer = ref('')
+const resuming = ref(false)
+const askedStep = computed(() => {
+  const id = props.run.pause?.step
+  return board.value.items.find(i => !!id && i.id === id)
+})
+const isAsked = (id: string) => paused.value && askedStep.value?.id === id
+const resumeBlocker = computed(() => thinking.value
+  ? 'Бот заканчивает ход — сейчас можно будет продолжить'
+  : '')
+const cleanOption = (l: string) => l.replace(/\s*\((?:рекомендую|рекомендуется|recommended)\)/i, '')
+// клик по варианту — он становится ответом (повторный клик снимает)
+function pickOption(o: string) {
+  const v = cleanOption(o)
+  answer.value = answer.value === v
+    ? ''
+    : v
+}
+async function resume() {
+  resuming.value = true
+  try {
+    await api(`/api/runs/${props.run.id}/resume`, {
+      answer: answer.value.trim(),
+    })
+    answer.value = ''
+  }
+  catch (e: any) {
+    toast(e.message)
+  }
+  finally {
+    resuming.value = false
+  }
+}
 const SUG_TEXT: Record<string, string> = {
   add: 'Бот предлагает добавить',
   edit: 'Бот предлагает изменить',
@@ -387,18 +434,34 @@ const SUG_TEXT: Record<string, string> = {
 </script>
 
 <template>
-  <section class="fboard">
+  <section
+    ref="root"
+    class="fboard"
+  >
     <header>
       <b>План фичи</b>
+      <template v-if="locked">
+        <span class="tag ok">утверждён — бот работает по нему</span>
+        <span class="spacer" />
+        <button
+          class="btn ghost sm"
+          @click="shown = !shown"
+        >
+          {{ shown ? 'Свернуть' : 'Показать план' }}
+        </button>
+      </template>
       <span
-        v-if="locked"
-        class="tag ok"
-      >утверждён — бот работает по нему</span>
+        v-else-if="paused"
+        class="tag wait"
+      >пауза — бот ждёт ответа</span>
       <span
         v-else
         class="small"
       >{{ steps }} шаг. · стрелка — «после» · карточки можно двигать</span>
-      <span class="spacer" />
+      <span
+        v-if="!locked"
+        class="spacer"
+      />
       <template v-if="!locked">
         <template v-if="board.suggestions.length">
           <span class="small sug-count">Предложений бота: {{ board.suggestions.length }}</span>
@@ -460,7 +523,55 @@ const SUG_TEXT: Record<string, string> = {
       </template>
     </header>
 
-    <div class="viewport">
+    <form
+      v-if="paused"
+      class="question"
+      @submit.prevent="resume"
+    >
+      <div class="small">
+        Вопрос бота{{ askedStep ? ` к шагу «${askedStep.title || askedStep.id}»` : '' }} — правки кода остановлены
+      </div>
+      <div class="q">
+        {{ run.pause.text }}
+      </div>
+      <div
+        v-if="run.pause.options?.length"
+        class="opts"
+      >
+        <button
+          v-for="o in run.pause.options"
+          :key="o"
+          type="button"
+          class="btn sm"
+          :class="answer === cleanOption(o) ? 'primary' : 'ghost'"
+          @click="pickOption(o)"
+        >
+          {{ o }}
+        </button>
+      </div>
+      <textarea
+        v-model="answer"
+        rows="2"
+        placeholder="Ответ боту (можно не писать, если ответили правкой плана или эскиза)"
+        @keydown.enter.meta.prevent="resume"
+        @keydown.enter.ctrl.prevent="resume"
+      />
+      <div class="row">
+        <span class="small">{{ resumeBlocker || 'Бот получит ответ и доску — если вы её меняли, то с обновлённым планом.' }}</span>
+        <span class="spacer" />
+        <button
+          class="btn primary"
+          :disabled="!!resumeBlocker || resuming"
+        >
+          Продолжить работу
+        </button>
+      </div>
+    </form>
+
+    <div
+      v-if="open"
+      class="viewport"
+    >
       <div
         v-if="!cards.length && !sketches.length"
         class="empty small"
@@ -569,6 +680,7 @@ const SUG_TEXT: Record<string, string> = {
             del: sugFor.get(c.it.id)?.kind === 'remove',
             chg: sugFor.get(c.it.id)?.kind === 'edit',
             dragging: drag.id === c.it.id,
+            asked: isAsked(c.it.id),
           }]"
           :data-step="c.it.type === 'step' && !c.add ? c.it.id : undefined"
           :style="{ left: `${posOf(c.it).x}px`, top: `${posOf(c.it).y}px`, width: `${W}px` }"
@@ -606,6 +718,11 @@ const SUG_TEXT: Record<string, string> = {
           <template v-else>
             <div class="head">
               <span class="kind">{{ c.it.type === 'step' ? 'шаг' : 'заметка' }}{{ c.it.by === 'user' ? ' · ваш' : '' }}</span>
+              <span
+                v-if="isAsked(c.it.id)"
+                class="tag wait"
+                :title="run.pause.text"
+              >вопрос бота</span>
               <span class="spacer" />
               <template v-if="!locked && !c.add">
                 <button
@@ -728,7 +845,7 @@ const SUG_TEXT: Record<string, string> = {
       </div>
     </div>
 
-    <footer v-if="!locked">
+    <footer v-if="!run.planApproved">
       <span class="small">{{ blocker || 'Бот получит исходную задачу, этот план, эскизы и пометки. До нажатия код не меняется.' }}</span>
       <span class="spacer" />
       <button
@@ -776,6 +893,39 @@ footer {
   background: var(--ok-soft);
   border-radius: 6px;
   padding: 1px 6px;
+}
+.tag.wait {
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 11px;
+}
+.question {
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--warn-soft);
+  .small {
+    color: var(--warn);
+  }
+  .q {
+    margin: 4px 0 8px;
+    font-weight: 600;
+  }
+  .opts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+  }
+  .row {
+    align-items: center;
+  }
 }
 .viewport {
   position: relative;
@@ -912,6 +1062,10 @@ svg.ink {
   &.chg {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  &.asked {
+    border-color: var(--warn);
+    box-shadow: 0 0 0 3px var(--warn-soft);
   }
   &.del {
     border-color: var(--bad);

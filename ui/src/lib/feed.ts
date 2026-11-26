@@ -64,8 +64,8 @@ function esc(s: unknown) {
 // Вопрос с вариантами — блок ```choices {json}``` в тексте ответа
 export function splitChoices(t: string) {
   const questions: Question[] = []
-  // план «Разработки фичи» показывается на доске, а не JSON-ом в ленте
-  const text = t.replace(/```plan[ \t]*\r?\n[\s\S]*?```/g, '*План — на доске выше.*').replace(/```choices\s*\n([\s\S]*?)```/g, (all, body) => {
+  // план и вопрос «Разработки фичи» показываются на доске, а не JSON-ом в ленте
+  const text = t.replace(/```plan[ \t]*\r?\n[\s\S]*?```/g, '*План — на доске выше.*').replace(/```question[ \t]*\r?\n[\s\S]*?```/g, '*Вопрос — на доске выше: ответьте там или здесь.*').replace(/```choices\s*\n([\s\S]*?)```/g, (all, body) => {
     try {
       const q = JSON.parse(body)
       if (!q.question || !Array.isArray(q.options) || !q.options.length)
