@@ -75,6 +75,10 @@ say '3. Панель'
 (cd ui && npm install --no-audit --no-fund --silent && npm run build --silent) && ok 'панель собрана (ui/dist)' || { bad 'не удалось собрать панель: cd ui && npm install && npm run build'; exit 1; }
 
 echo
+# браузер для скриншотов «до/после» в PR (по желанию)
+(cd ui && node -e "import('playwright-core').then(async ({chromium}) => { const b = await chromium.launch(); await b.close() })" >/dev/null 2>&1) \
+  && ok 'браузер для скриншотов' || printf '  · скриншоты в PR: (cd ui && npx playwright install chromium) — по желанию\n'
+
 say '4. Команда bot'
 mkdir -p "$HOME/.local/bin"
 ln -sf "$BOT_DIR/agent.sh" "$HOME/.local/bin/bot"

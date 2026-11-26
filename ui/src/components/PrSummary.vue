@@ -54,6 +54,11 @@ const STATE = { open: 'Открыт', closed: 'Закрыт', merged: 'Слит'
 const busy = computed(() => ['running', 'queued'].includes(props.run.status))
 const shown = computed(() => (allFiles.value ? pr.value?.files : pr.value?.files.slice(0, 8)) || [])
 
+async function fixFsd() {
+  const list = (props.run.fsdNew || []).slice(0, 30).map((x: string) => `- ${x}`).join('\n')
+  try { await startJob({ kind: 'pr', pr: pr.value!.number, ai: props.run.ai, repo: props.run.repo || store.curRepo, text: `Исправь новые нарушения правил слоёв FSD, которые появились в этом PR (поведение не меняй; общий код — вниз по слоям, импорт чужого слайса — через его index):\n${list}` }) }
+  catch (e: any) { toast(e.message) }
+}
 async function fix(text: '@ci' | '@conflicts') {
   try { await startJob({ kind: 'pr', pr: pr.value!.number, text, ai: props.run.ai, repo: props.run.repo || store.curRepo }) }
   catch (e: any) { toast(e.message) }
@@ -166,6 +171,19 @@ function lineClass(l: string) {
           @click="fix('@conflicts')"
         >
           Разрешить
+        </button>
+      </div>
+      <div
+        v-if="run.fsdNew?.length && pr.state === 'open'"
+        class="row"
+      >
+        <span class="k">FSD</span><span class="v"><span class="c fail">новых нарушений: {{ run.fsdNew.length }}</span></span>
+        <button
+          class="btn sm primary"
+          :disabled="busy"
+          @click="fixFsd"
+        >
+          Починить
         </button>
       </div>
       <div

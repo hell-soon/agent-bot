@@ -8,7 +8,8 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { FORMAT as ARCH_FORMAT, scan as archScan } from './arch-scan.mjs'
 import { codeGraph } from './code-graph.mjs'
-import { impactMarkdown, mapMarkdown } from './project-map.mjs'
+import { impactMarkdown, mapMarkdown, sliceOf } from './project-map.mjs'
+import { pickRoutes, shoot, VIEWPORTS } from './screens.mjs'
 import * as skills from './skills.mjs'
 
 const PORT = 4545
@@ -81,7 +82,7 @@ const codeCache = new Map() // repo → { sha, graph }
 const sh = (cmd, args, opts = {}) => new Promise((resolve, reject) => execFile(cmd, args, { env: ENV, maxBuffer: 64 * 1024 * 1024, timeout: 60000, ...opts }, (e, out, err) => (e ? reject(new Error(String(err || e.message).trim().split('\n').pop())) : resolve(out))))
 // базовая ветка репозитория в копии бота: клонировать при надобности, освежить, вернуть ref, sha и чтение из git
 const fetchedAt = new Map()
-async function baseRef(repo, fresh) {
+async function baseRef(repo, fresh, wantRef) {
   const W = path.join(BOT, 'work', repo.replace('/', '__'))
   if (!fs.existsSync(path.join(W, '.git')))
     await sh(AGENT, ['_status'], { env: { ...ENV, BOT_REPO: repo } }) // клонирует и настроит доступ
@@ -89,7 +90,7 @@ async function baseRef(repo, fresh) {
     await sh('git', ['-C', W, 'fetch', '-q', 'origin']).catch(() => {})
     fetchedAt.set(repo, Date.now())
   }
-  const ref = (await sh('git', ['-C', W, 'rev-parse', '--abbrev-ref', 'origin/HEAD']).catch(() => 'origin/main')).trim()
+  const ref = wantRef || (await sh('git', ['-C', W, 'rev-parse', '--abbrev-ref', 'origin/HEAD']).catch(() => 'origin/main')).trim()
   const sha = (await sh('git', ['-C', W, 'rev-parse', ref])).trim()
   const read = (f) => {
     try { return execFileSync('git', ['-C', W, 'show', `${ref}:${f}`], { env: ENV, maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }).toString() }
@@ -431,24 +432,197 @@ async function prepareMap(run) {
   run.mapFile = file
   appendEvent(run, { type: 'bot_note', text: `Карта проекта: ${relevant.length ? `похоже, задача про ${relevant.slice(0, 4).join(', ')}` : 'слои и слайсы'} — из графа импортов`, at: Date.now() })
 }
-async function prImpact(run) {
+// граф импортов произвольной ветки (для PR) — кеш по sha
+const refCache = new Map()
+async function graphAt(repo, ref) {
+  const g = await baseRef(repo, true, ref)
+  const key = `${repo}@${g.sha}`
+  if (!refCache.has(key)) {
+    const files = await g.list()
+    const lines = await g.grep(IMPORT_RE)
+    refCache.set(key, codeGraph({ list: () => files, read: g.read, grep: () => lines }))
+    if (refCache.size > 20)
+      refCache.delete(refCache.keys().next().value)
+  }
+  return refCache.get(key)
+}
+
+// ---------- GitHub: JSON-запрос от имени бота, комментарий с меткой (создать или обновить) ----------
+async function ghJson(method, p, body) {
+  const file = path.join(UPLOADS, 'tmp', `${Date.now()}-${Math.random().toString(36).slice(2)}.json`)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, JSON.stringify(body || {}))
+  try { return JSON.parse(await sh('gh', ['api', '-X', method, p, '--input', file]) || '{}') }
+  finally { fs.rmSync(file, { force: true }) }
+}
+async function upsertComment(repo, n, marker, body) {
+  const R = `repos/${repo}`
+  const comments = await gh(['api', `${R}/issues/${n}/comments?per_page=100`])
+  const mine = (Array.isArray(comments) ? comments : []).find(c => String(c.body).includes(marker))
+  if (mine)
+    await ghJson('PATCH', `${R}/issues/comments/${mine.id}`, { body })
+  else await ghJson('POST', `${R}/issues/${n}/comments`, { body })
+  return mine ? 'updated' : 'created'
+}
+
+// «Что может задеть» + новые нарушения FSD (ветка PR против базовой) — одним комментарием
+async function prReport(run) {
   const n = Number(String(run.prUrl).split('/').pop()); const R = `repos/${run.repo}`
   if (!n)
     return false
-  const files = await gh(['api', `${R}/pulls/${n}/files?per_page=100`])
+  const rc = readConfig().repos?.[run.repo] || {}
+  const [files, pr] = await Promise.all([gh(['api', `${R}/pulls/${n}/files?per_page=100`]), gh(['api', `${R}/pulls/${n}`])])
   const changed = (Array.isArray(files) ? files : []).map(f => f.filename)
   if (!changed.length)
     return false
-  const body = impactMarkdown(await codeData(run.repo), changed)
-  const comments = await gh(['api', `${R}/issues/${n}/comments?per_page=100`])
-  const mine = (Array.isArray(comments) ? comments : []).find(c => String(c.body).includes('<!-- agent-bot:impact -->'))
-  const file = path.join(UPLOADS, 'map', `impact-${run.id}.md`)
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, body)
-  await sh('gh', mine
-    ? ['api', '-X', 'PATCH', `${R}/issues/comments/${mine.id}`, '-F', `body=@${file}`]
-    : ['api', '-X', 'POST', `${R}/issues/${n}/comments`, '-F', `body=@${file}`])
-  return mine ? 'updated' : 'created'
+  const base = await codeData(run.repo)
+  const parts = []
+  if (rc.impact !== false)
+    parts.push(impactMarkdown(base, changed))
+  if (rc.fsd !== false && base.fsd && pr?.head?.ref) {
+    try {
+      const head = await graphAt(run.repo, `origin/${pr.head.ref}`)
+      const key = e => `${e.from}>${e.to}`
+      const had = new Set(base.edges.filter(e => e.bad).map(key))
+      const fresh = head.edges.filter(e => e.bad && !had.has(key(e)))
+      run.fsdNew = fresh.map(e => `${e.from} → ${e.to}: ${e.bad}`)
+      parts.push(fresh.length
+        ? ['### Правила слоёв FSD', `⚠️ Новых нарушений: **${fresh.length}**`, ...fresh.slice(0, 15).map(e => `- \`${e.from}\` → \`${e.to}\` — ${e.bad}`), fresh.length > 15 ? `- … и ещё ${fresh.length - 15}` : ''].filter(Boolean).join('\n')
+        : '### Правила слоёв FSD\n✅ Новых нарушений нет')
+    }
+    catch (e) { console.error('fsd:', e.message) }
+  }
+  if (!parts.length)
+    return false
+  const body = `<!-- agent-bot:impact -->\n${parts.join('\n\n').replace('<!-- agent-bot:impact -->\n', '')}`
+  return upsertComment(run.repo, n, '<!-- agent-bot:impact -->', body)
+}
+
+// ---------- скриншоты «до/после» ----------
+const SECRETS = path.join(BOT, 'keys', 'screens')
+const secretFile = (repo, kind) => path.join(SECRETS, `${repo.replace('/', '__')}.${kind}`)
+const secret = (repo, kind) => { try { return fs.readFileSync(secretFile(repo, kind), 'utf8').trim() } catch { return '' } }
+const UI_RE = /\.(?:vue|svelte|[jt]sx|css|scss|sass|less|html)$/
+const vercelSlug = b => String(b).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+async function reachable(url) {
+  try {
+    const r = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(15000) })
+    return r.status < 400 || r.status === 401 || r.status === 403
+  }
+  catch { return false }
+}
+async function previewOf(repo, rc, branch, sha) {
+  if (rc.previewUrl)
+    return rc.previewUrl.replace('{branch}', vercelSlug(branch)).replace('{sha}', sha.slice(0, 7)).replace(/\/$/, '')
+  const deps = await gh(['api', `repos/${repo}/deployments?sha=${sha}&per_page=10`])
+  for (const dep of Array.isArray(deps) ? deps : []) {
+    const st = await gh(['api', `repos/${repo}/deployments/${dep.id}/statuses?per_page=5`])
+    const ok = (Array.isArray(st) ? st : []).find(x => x.state === 'success' && x.environment_url)
+    if (ok)
+      return ok.environment_url.replace(/\/$/, '')
+  }
+  return ''
+}
+async function siteOf(repo, rc) {
+  const cands = [rc.siteUrl]
+  const info = await gh(['api', `repos/${repo}`])
+  cands.push(info?.homepage)
+  const deps = await gh(['api', `repos/${repo}/deployments?environment=Production&per_page=3`])
+  for (const dep of Array.isArray(deps) ? deps : []) {
+    const st = await gh(['api', `repos/${repo}/deployments/${dep.id}/statuses?per_page=3`])
+    cands.push((Array.isArray(st) ? st : []).find(x => x.state === 'success')?.environment_url)
+  }
+  for (const u of cands.filter(Boolean)) {
+    if (await reachable(u))
+      return String(u).replace(/\/$/, '')
+  }
+  return ''
+}
+// картинки — в отдельную ветку agent-bot-screens (в PR они видны по ссылке ?raw=true)
+async function pushImages(repo, files, dir) {
+  const R = `repos/${repo}`; const BR = 'agent-bot-screens'
+  const head = await gh(['api', `${R}/git/ref/heads/${BR}`])
+  const parent = head?.object?.sha
+  const baseTree = parent ? (await gh(['api', `${R}/git/commits/${parent}`]))?.tree?.sha : undefined
+  const tree = []
+  for (const f of files) {
+    const blob = await ghJson('POST', `${R}/git/blobs`, { content: fs.readFileSync(f.file).toString('base64'), encoding: 'base64' })
+    tree.push({ path: `${dir}/${path.basename(f.file)}`, mode: '100644', type: 'blob', sha: blob.sha })
+  }
+  const t = await ghJson('POST', `${R}/git/trees`, baseTree ? { base_tree: baseTree, tree } : { tree })
+  const c = await ghJson('POST', `${R}/git/commits`, { message: `Скриншоты ${dir}`, tree: t.sha, parents: parent ? [parent] : [] })
+  if (parent)
+    await ghJson('PATCH', `${R}/git/refs/heads/${BR}`, { sha: c.sha, force: false })
+  else await ghJson('POST', `${R}/git/refs`, { ref: `refs/heads/${BR}`, sha: c.sha })
+  return p => `https://github.com/${repo}/blob/${BR}/${dir}/${path.basename(p)}?raw=true`
+}
+const routeKey = r => (r === '/' ? 'home' : r.replace(/^\//, '').replace(/[^\w-]+/g, '_'))
+async function screensJob(run) {
+  const rc = readConfig().repos?.[run.repo] || {}
+  if (rc.screens === false)
+    return
+  const n = Number(String(run.prUrl).split('/').pop()); const R = `repos/${run.repo}`
+  const [files, pr] = await Promise.all([gh(['api', `${R}/pulls/${n}/files?per_page=100`]), gh(['api', `${R}/pulls/${n}`])])
+  const changed = (Array.isArray(files) ? files : []).map(f => f.filename)
+  if (!changed.some(f => UI_RE.test(f)) || !pr?.head?.sha)
+    return
+  const note = text => { appendEvent(run, { type: 'bot_note', text: `Скриншоты: ${text}`, at: Date.now() }); pushState() }
+  note('правки интерфейса — жду превью PR')
+  let after = ''
+  for (let i = 0; i < 20 && !after; i++) {
+    after = await previewOf(run.repo, rc, pr.head.ref, pr.head.sha)
+    if (after && !(await reachable(after)))
+      after = ''
+    if (!after)
+      await sleep(30000)
+  }
+  if (!after)
+    return note('превью не нашлось за 10 мин — задайте адрес превью в Настройки → Репозиторий → Скриншоты')
+  const before = await siteOf(run.repo, rc)
+  const routes = pickRoutes(await codeData(run.repo), changed, sliceOf, rc.pages)
+  const shots = routes.flatMap(r => [
+    ...(before ? [{ key: `${routeKey(r)}-before`, url: before + r }] : []),
+    { key: `${routeKey(r)}-after`, url: after + r },
+  ])
+  const outDir = path.join(UPLOADS, 'screens', `${run.repo.replace('/', '__')}-pr${n}-${pr.head.sha.slice(0, 7)}`)
+  const { files: shotsDone } = await shoot(shots, { cookie: secret(run.repo, 'cookie'), bypass: secret(run.repo, 'bypass'), outDir })
+  const blocked = new Set(shotsDone.map(f => f.blocked).filter(Boolean))
+  if (blocked.has('vercel'))
+    note('превью закрыто защитой Vercel — добавьте секрет обхода (Vercel → Settings → Deployment Protection → Protection Bypass for Automation)')
+  if (blocked.has('login'))
+    note('открылась страница входа — добавьте cookie входа в настройках репозитория')
+  const good = shotsDone.filter(f => f.file)
+  if (!good.length)
+    return note('снять не получилось')
+  // в ленту задачи и в Telegram
+  const box = outboxOf(run)
+  fs.mkdirSync(box, { recursive: true })
+  for (const f of good) fs.copyFileSync(f.file, path.join(box, `screen-${path.basename(f.file)}`))
+  run.outNew = collectOut(run, 0)
+  const dir = `pr-${n}/${pr.head.sha.slice(0, 7)}`
+  let link
+  try { link = await pushImages(run.repo, good, dir) }
+  catch (e) { return note(`в PR не загрузились: ${e.message}`) }
+  const img = (key, vp) => {
+    const f = good.find(x => x.key === key && x.vp === vp)
+    return f ? `<img src="${link(f.file)}" width="${vp === 'phone' ? 260 : 420}">` : '—'
+  }
+  const body = [
+    '<!-- agent-bot:screens -->',
+    '### Скриншоты · до и после',
+    ...routes.flatMap(r => [
+      `**${r}**`,
+      '',
+      `| | до${before ? ' (основной сайт)' : ''} | после (превью PR) |`,
+      '|---|---|---|',
+      ...VIEWPORTS.map(vp => `| ${vp.title} | ${before ? img(`${routeKey(r)}-before`, vp.id) : 'нет адреса сайта'} | ${img(`${routeKey(r)}-after`, vp.id)} |`),
+      '',
+    ]),
+    `<sub>до — ${before || '—'} · после — ${after} · agent-bot, Playwright</sub>`,
+  ].join('\n')
+  await upsertComment(run.repo, n, '<!-- agent-bot:screens -->', body)
+  note(`в PR — ${routes.join(', ')} на телефоне и десктопе`)
 }
 
 function next() {
@@ -703,10 +877,11 @@ function next() {
     })
     pushState()
     notify(run)
-    if (run.prUrl && run.status === 'done' && readConfig().repos?.[run.repo]?.impact !== false) {
-      prImpact(run)
-        .then(r => r && (appendEvent(run, { type: 'bot_note', text: r === 'updated' ? 'Комментарий «Что может задеть» в PR обновлён' : 'В PR — комментарий «Что может задеть»', at: Date.now() }), pushState()))
-        .catch(e => console.error('impact:', e.message))
+    if (run.prUrl && run.status === 'done') {
+      prReport(run)
+        .then(r => r && (appendEvent(run, { type: 'bot_note', text: `${r === 'updated' ? 'Обновлён' : 'В PR —'} комментарий «Что может задеть»${run.fsdNew ? (run.fsdNew.length ? ` · новых нарушений FSD: ${run.fsdNew.length}` : ' · новых нарушений FSD нет') : ''}`, at: Date.now() }), pushState()))
+        .catch(e => console.error('pr report:', e.message))
+      screensJob(run).catch(e => console.error('screens:', e.message))
     }
     next()
   })
@@ -892,6 +1067,11 @@ const REPO_FIELDS = {
   labels: v => typeof v === 'string' && /^[\w,\s:.-]{0,200}$/.test(v),
   map: v => typeof v === 'boolean', // карта проекта в инструкциях перед задачей
   impact: v => typeof v === 'boolean', // комментарий «Что может задеть» в PR
+  fsd: v => typeof v === 'boolean', // новые нарушения FSD в PR
+  screens: v => typeof v === 'boolean', // скриншоты до/после для правок интерфейса
+  siteUrl: v => typeof v === 'string' && (v === '' || /^https?:\/\/\S{3,200}$/.test(v)),
+  previewUrl: v => typeof v === 'string' && (v === '' || /^https?:\/\/\S{3,200}$/.test(v)),
+  pages: v => typeof v === 'string' && /^[\w/,\s\-.:?=&]{0,300}$/.test(v),
 }
 const AUTO_FIELDS = ['issues', 'ci', 'reviews', 'conflicts']
 function writeRepoConfig(repo, patch) {
@@ -1713,6 +1893,41 @@ const server = http.createServer(async (req, res) => {
     return fs.createReadStream(f).pipe(res)
   }
 
+  if (p === '/api/repo-secret') { // секреты скриншотов: cookie входа, обход защиты Vercel (keys/screens/, chmod 600)
+    if (req.method !== 'POST') {
+      const repo = repoOf(url.searchParams.get('repo'))
+      return json(res, { cookie: !!secret(repo, 'cookie'), bypass: !!secret(repo, 'bypass') })
+    }
+    const b = await body(req)
+    const repo = repoOf(b.repo)
+    if (!['cookie', 'bypass'].includes(b.kind))
+      return json(res, { error: 'Не тот секрет' }, 400)
+    const v = String(b.value || '').trim()
+    if (v.length > 8000 || /[\r\n]/.test(v))
+      return json(res, { error: 'Одной строкой, до 8 КБ' }, 400)
+    if (v) {
+      fs.mkdirSync(SECRETS, { recursive: true, mode: 0o700 })
+      fs.writeFileSync(secretFile(repo, b.kind), `${v}\n`, { mode: 0o600 }); fs.chmodSync(secretFile(repo, b.kind), 0o600)
+    }
+    else fs.rmSync(secretFile(repo, b.kind), { force: true })
+    return json(res, { cookie: !!secret(repo, 'cookie'), bypass: !!secret(repo, 'bypass') })
+  }
+  if (req.method === 'POST' && p === '/api/screens/test') { // пробный снимок главной сайта (и превью по шаблону), чтобы проверить доступ
+    const b = await body(req)
+    const repo = repoOf(b.repo)
+    const rc = readConfig().repos?.[repo] || {}
+    try {
+      const site = await siteOf(repo, rc)
+      const shots = site ? [{ key: 'site', url: site + (rc.pages?.trim().split(/[,\s]+/)[0] || '/') }] : []
+      if (rc.previewUrl)
+        shots.push({ key: 'preview', url: rc.previewUrl.replace('{branch}', 'main').replace('{sha}', '') })
+      if (!shots.length)
+        return json(res, { error: 'Не знаю адрес сайта: задайте его или «Website» репозитория на GitHub' }, 400)
+      const { files } = await shoot(shots, { cookie: secret(repo, 'cookie'), bypass: secret(repo, 'bypass'), outDir: path.join(UPLOADS, 'screens', `test-${repo.replace('/', '__')}-${Date.now()}`) })
+      return json(res, { site, files: files.filter(f => f.vp === 'phone').map(f => ({ key: f.key, url: shots.find(x => x.key === f.key)?.url, file: f.file, blocked: f.blocked, error: f.error })) })
+    }
+    catch (e) { return json(res, { error: e.message.split('\n')[0] }, 500) }
+  }
   if (p === '/api/codegraph') { // граф кода: файлы и импорты базовой ветки + где работал бот
     try { return json(res, await codeData(repoOf(url.searchParams.get('repo')), url.searchParams.has('fresh'))) }
     catch (e) { return json(res, { error: e.message }, 500) }
@@ -1859,7 +2074,7 @@ ${ARCH_FORMAT}`,
       ].includes(run.status)) {
         if (run.status === 'limited')
           run.status = 'stopped'
-        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, modelUsed, replyFiles, outSeen, outNew, codexImgs, mapDone, mapFile, ...rest } = run
+        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, modelUsed, replyFiles, outSeen, outNew, codexImgs, mapDone, mapFile, fsdNew, ...rest } = run
         newRun(rest)
       }
     }

@@ -16,6 +16,11 @@ const s = reactive<Record<string, any>>({
   labels: '',
   map: true,
   impact: true,
+  fsd: true,
+  screens: true,
+  siteUrl: '',
+  previewUrl: '',
+  pages: '',
   auto: {
     issues: false,
     ci: false,
@@ -30,7 +35,7 @@ const checking = ref(false)
 
 async function load() {
   const r = await api(`/api/repo-settings?repo=${encodeURIComponent(store.curRepo)}`)
-  Object.assign(s, { map: true, impact: true }, r.settings, {
+  Object.assign(s, { map: true, impact: true, fsd: true, screens: true }, r.settings, {
     auto: {
       ...s.auto,
       ...(r.settings.auto || {}),
@@ -45,6 +50,28 @@ async function loadLog() {
   autoInfo.value = a
 }
 onMounted(load)
+
+// ---------- скриншоты: секреты и пробный снимок ----------
+const sec = ref<{ cookie: boolean, bypass: boolean }>({ cookie: false, bypass: false })
+const secIn = reactive({ cookie: '', bypass: '' })
+const test = ref<{ site?: string, files?: any[] } | null>(null)
+const testing = ref(false)
+onMounted(async () => { sec.value = await api(`/api/repo-secret?repo=${encodeURIComponent(store.curRepo)}`) })
+async function saveSecret(kind: 'cookie' | 'bypass', value: string) {
+  try {
+    sec.value = await api('/api/repo-secret', { repo: store.curRepo, kind, value })
+    secIn[kind] = ''
+    toast(value ? 'Сохранено в keys/' : 'Удалено')
+  }
+  catch (e: any) { toast(e.message) }
+}
+async function runTest() {
+  testing.value = true; test.value = null
+  try { test.value = await api('/api/screens/test', { repo: store.curRepo }) }
+  catch (e: any) { toast(e.message) }
+  finally { testing.value = false }
+}
+const BLOCK: Record<string, string> = { vercel: 'закрыто защитой Vercel — нужен секрет обхода', login: 'страница входа — нужен cookie' }
 
 async function save(patch: Record<string, any>) {
   try {
@@ -176,6 +203,16 @@ const AUTO = [
       </div>
       <div class="set">
         <div class="lbl">
+          Проверка FSD в PR<small>Новые нарушения правил слоёв (ветка PR против базовой) — в комментарии; в панели — «Починить»</small>
+        </div>
+        <label class="sw"><input
+          type="checkbox"
+          :checked="s.fsd"
+          @change="save({ fsd: ($event.target as HTMLInputElement).checked })"
+        ><span /></label>
+      </div>
+      <div class="set">
+        <div class="lbl">
           «Что может задеть» в PR<small>Комментарий: кто использует изменённые слайсы — их стоит проверить</small>
         </div>
         <label class="sw"><input
@@ -184,6 +221,110 @@ const AUTO = [
           @change="save({ impact: ($event.target as HTMLInputElement).checked })"
         ><span /></label>
       </div>
+    </div>
+
+    <div class="grp">
+      <h4>Скриншоты интерфейса в PR</h4>
+      <div class="set">
+        <div class="lbl">
+          До и после<small>PR с правками интерфейса: страницы, которые используют изменённое, — на телефоне и десктопе. «До» — сайт, «после» — превью PR</small>
+        </div>
+        <label class="sw"><input
+          type="checkbox"
+          :checked="s.screens"
+          @change="save({ screens: ($event.target as HTMLInputElement).checked })"
+        ><span /></label>
+      </div>
+      <template v-if="s.screens">
+        <div class="set">
+          <div class="lbl">
+            Адрес сайта<small>Пусто — Website репозитория или продакшен-деплой</small>
+          </div>
+          <input
+            :value="s.siteUrl"
+            placeholder="https://example.app"
+            @change="save({ siteUrl: ($event.target as HTMLInputElement).value.trim() })"
+          >
+        </div>
+        <div class="set">
+          <div class="lbl">
+            Адрес превью<small>Пусто — из деплоев GitHub (Vercel, Netlify). Шаблон: {branch}</small>
+          </div>
+          <input
+            :value="s.previewUrl"
+            placeholder="https://app-git-{branch}-team.vercel.app"
+            @change="save({ previewUrl: ($event.target as HTMLInputElement).value.trim() })"
+          >
+        </div>
+        <div class="set">
+          <div class="lbl">
+            Страницы<small>Пусто — сам по графу (страницы, которые используют изменённое)</small>
+          </div>
+          <input
+            :value="s.pages"
+            placeholder="/, /library"
+            @change="save({ pages: ($event.target as HTMLInputElement).value.trim() })"
+          >
+        </div>
+        <div
+          v-for="[k, t, d, ph] in ([['bypass', 'Обход защиты Vercel', 'Vercel → Settings → Deployment Protection → Protection Bypass for Automation', 'секрет'], ['cookie', 'Cookie входа', 'Если сайт требует входа: «имя=значение; …» из DevTools → Application → Cookies', 'nuxt-session=…']] as const)"
+          :key="k"
+          class="set"
+        >
+          <div class="lbl">
+            {{ t }}<small>{{ sec[k] ? 'сохранён в keys/ · ' : '' }}{{ d }}</small>
+          </div>
+          <input
+            v-model="secIn[k]"
+            type="password"
+            autocomplete="off"
+            :placeholder="sec[k] ? '•••••• (заменить)' : ph"
+            @keydown.enter="saveSecret(k, secIn[k])"
+          >
+          <button
+            v-if="secIn[k]"
+            class="btn sm"
+            @click="saveSecret(k, secIn[k])"
+          >
+            Сохранить
+          </button>
+          <button
+            v-else-if="sec[k]"
+            class="btn ghost sm"
+            @click="saveSecret(k, '')"
+          >
+            Удалить
+          </button>
+        </div>
+        <div class="line">
+          <span class="small">Проверить, что сайт открывается без страницы входа</span>
+          <span class="spacer" />
+          <button
+            class="btn sm"
+            :disabled="testing"
+            @click="runTest"
+          >
+            {{ testing ? 'Снимаю…' : 'Пробный снимок' }}
+          </button>
+        </div>
+        <div
+          v-if="test?.files"
+          class="shots"
+        >
+          <figure
+            v-for="x in test.files"
+            :key="x.key"
+          >
+            <img
+              v-if="x.file"
+              :src="`/api/file?p=${encodeURIComponent(x.file)}`"
+            >
+            <figcaption class="small">
+              {{ x.url }}<br><b :class="{ bad: x.blocked || x.error }">{{ x.error || (x.blocked ? BLOCK[x.blocked] : 'открылось') }}</b>
+            </figcaption>
+          </figure>
+        </div>
+      </template>
     </div>
 
     <div class="grp">
@@ -331,6 +472,27 @@ const AUTO = [
 }
 .short {
   min-height: 64px;
+}
+.shots {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  figure {
+    margin: 0;
+    width: 150px;
+  }
+  img {
+    width: 150px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+  }
+  figcaption {
+    word-break: break-all;
+    .bad {
+      color: var(--bad);
+    }
+  }
 }
 .log {
   list-style: none;
