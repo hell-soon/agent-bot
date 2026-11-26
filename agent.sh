@@ -98,6 +98,21 @@ setup_repo() {
   git config --local --add credential.helper ''
   git config --local --add credential.helper \
     "!f() { echo username=x-access-token; echo password=\$(BOT_REPO=$REPO $BOT_DIR/token.sh); }; f"
+  # Пуш в базовую ветку — только через PR: git-хук в копии бота, работает и для Claude, и для Codex
+  # (защита от ошибки, а не от умысла; на GitHub — ещё Rulesets)
+  git config --local --unset core.hooksPath 2>/dev/null || true
+  local hook; hook="$(git rev-parse --git-path hooks)/pre-push"; mkdir -p "$(dirname "$hook")"
+  cat > "$hook" <<HOOK
+#!/bin/sh
+# Поставлен ботом: пуш в $BASE (и main/master) запрещён — только ветка + PR
+while read -r lref lsha rref rsha; do
+  case "\$rref" in refs/heads/$BASE|refs/heads/main|refs/heads/master)
+    echo "bot: пуш в \$rref запрещён — работай в своей ветке и открой PR" >&2; exit 1 ;;
+  esac
+done
+exit 0
+HOOK
+  chmod +x "$hook"
 }
 
 fresh_main() { # чистый main с GitHub; несохранённое от прошлого раза — спросить (или отказаться в фоне)
@@ -312,6 +327,7 @@ AUTO=(-p --permission-mode acceptEdits
     "Bash(head:*)" "Bash(tail:*)" "Bash(wc:*)" "Bash(mkdir:*)" "Bash(curl -s http://127.0.0.1:*)"
     "Bash(jq:*)" "Bash(sort:*)" "Bash(uniq:*)" "Bash(diff:*)" "Bash(test:*)" "Bash(pwd)" "Bash(echo:*)"
   --disallowedTools "Bash(git push --force:*)" "Bash(git push -f:*)" "Bash(git push origin $BASE:*)" "Bash(git push --force-with-lease:*)"
+  "Bash(git push --no-verify:*)" "Bash(git -c:*)" "Bash(git config:*)"
     "Bash(gh pr merge:*)" "Bash(gh repo delete:*)" "Bash(gh api -X DELETE:*)" "AskUserQuestion")
 # Свои разрешения (панель → Настройки → Разрешения): allowCmds / denyCmds — начала команд
 while IFS= read -r c; do [ -n "$c" ] && AUTO+=(--allowedTools "Bash($c:*)"); done < <(jq -r '.allowCmds[]? // empty' "$CONFIG" 2>/dev/null)

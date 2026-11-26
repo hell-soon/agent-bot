@@ -49,10 +49,14 @@ BOT_ID=$(curl -sf "https://api.github.com/users/${SLUG}%5Bbot%5D" | jq -r '.id /
 [ -n "$BOT_ID" ] || { restore; bad 'Не нашёл пользователя бота на GitHub'; exit 1; }
 ok "бот: ${SLUG}[bot]"
 
-REPOS=$(./bin/gh api /installation/repositories --paginate --jq '.repositories[].full_name' 2>/dev/null || true)
+OLD_OWNERS=${BOT_OWNERS:-}
+REPOS=$(./token.sh --repos 2>/dev/null | jq -r '.[]' || true)
 [ -n "$REPOS" ] || { restore; bad 'Приложение не установлено ни на один репозиторий: страница приложения → Install App'; exit 1; }
 echo '  Доступные репозитории:'; printf '%s\n' "$REPOS" | sed 's/^/    /'
 DEF=$(ask 'Репозиторий по умолчанию' "${BOT_DEFAULT_REPO:-$(printf '%s\n' "$REPOS" | head -1)}")
+# чьи установки боту можно использовать: приложение может стать публичным — чужие тогда не в счёт
+OWNERS=${OLD_OWNERS:-$(printf '%s\n' "$REPOS" | cut -d/ -f1 | sort -u | paste -sd, -)}
+OWNERS=$(ask 'Чьи установки разрешены (через запятую)' "$OWNERS")
 
 cat > bot.env <<EOF
 # Личные настройки бота — создаёт setup.sh. В git не попадает.
@@ -61,6 +65,7 @@ GITHUB_APP_KEY=keys/app.pem
 BOT_NAME='${SLUG}[bot]'
 BOT_EMAIL='${BOT_ID}+${SLUG}[bot]@users.noreply.github.com'
 BOT_DEFAULT_REPO=$DEF
+BOT_OWNERS='$OWNERS'
 EOF
 chmod 600 bot.env; rm -f bot.env.bak
 ok 'bot.env сохранён'

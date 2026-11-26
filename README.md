@@ -103,6 +103,8 @@ BOT_AI=codex bot 5      разово другим ИИ;  BOT_MODEL=opus BOT_EFFO
 
 - В фоне бот может только править файлы в своей копии, `git`, `gh`, `npm`/`npx`/`node` и чтение. Запрещены `gh pr merge`, force push, push в `main`.
 - У **Codex** таких запретов по командам нет — только песочница и правила. Поэтому **защитите `main`**: репозиторий → Settings → Rules → Rulesets → New branch ruleset → Target: default branch → **Restrict updates**, **Block force pushes**; в Bypass list — себя (Repository admin, Always allow). Тогда в `main` попадает только то, что сливаете вы.
+- Пуш в базовую ветку бот не сделает и без Rulesets: в его копии репозитория стоит git-хук `pre-push`, который это отклоняет (и для Claude, и для Codex). Это защита от ошибки, а не от умысла — Rulesets всё равно лучше.
+- **Репозиторий в чужом аккаунте или организации**: приложение → Advanced → **Make public**, затем Install App → нужный аккаунт → Only select repositories. Публичное приложение может поставить себе кто угодно, но без вашего ключа бот там ничего не делает, а панель и бот работают только с установками из `BOT_OWNERS` в `bot.env` (Настройки → «Доступ на GitHub»; чужие установки там же можно удалить).
 - Секреты — только у вас: `keys/` (ключ приложения, токен Claude) и `bot.env` в git не попадают.
 
 ## Панель

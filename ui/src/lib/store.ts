@@ -53,7 +53,7 @@ export const MODES: Record<Mode, { name: string, ph?: string, hint: string, more
   },
 }
 
-export type DrawerPage = 'main' | 'memory' | 'repo' | 'skills' | 'rules' | 'perms' | 'notify'
+export type DrawerPage = 'main' | 'memory' | 'repo' | 'skills' | 'rules' | 'perms' | 'notify' | 'access'
 export interface Skill { id: string, name: string, description: string, manual: boolean, source: string, sourceLabel: string, group: string, enabled: boolean, readonly: boolean }
 
 const savedMode = ls.get('bot:mode') as Mode | null

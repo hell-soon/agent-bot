@@ -1425,6 +1425,36 @@ const server = http.createServer(async (req, res) => {
       return json(res, { error: 'Нет такой задачи' }, 404)
     return json(res, { pr: await prSummary(run, url.searchParams.has('fresh')) })
   }
+  if (p === '/api/installations') { // установки GitHub App: чьи можно использовать (BOT_OWNERS), чужие — удалить
+    const run = args => new Promise(resolve => execFile(path.join(BOT, 'token.sh'), args, { env: ENV, timeout: 30000 }, (err, out, e) => resolve({ err: err && (String(e).trim() || err.message), out })))
+    if (req.method === 'POST') {
+      const b = await body(req)
+      if (b.remove) {
+        const r = await run(['--uninstall', String(Number(b.remove))])
+        if (r.err)
+          return json(res, { error: r.err }, 400)
+      }
+      else if (typeof b.owner === 'string' && /^[\w.-]{1,40}$/.test(b.owner)) {
+        const file = path.join(BOT, 'bot.env')
+        const text = fs.readFileSync(file, 'utf8')
+        const cur = (text.match(/^BOT_OWNERS=['"]?([^'"\n]*)/m)?.[1] || '').split(',').map(x => x.trim()).filter(Boolean)
+        const next = b.allow
+          ? [...new Set([...cur, b.owner])]
+          : cur.filter(x => x.toLowerCase() !== b.owner.toLowerCase())
+        if (!next.length)
+          return json(res, { error: 'Нужен хотя бы один разрешённый владелец' }, 400)
+        const line = `BOT_OWNERS='${next.join(',')}'`
+        fs.writeFileSync(file, /^BOT_OWNERS=.*$/m.test(text) ? text.replace(/^BOT_OWNERS=.*$/m, line) : `${text.replace(/\n?$/, '\n')}${line}\n`, { mode: 0o600 })
+      }
+      reposCache = { at: 0, list: [] }
+    }
+    const r = await run(['--installations'])
+    let list = []
+    try { list = JSON.parse(r.out) }
+    catch {}
+    const owners = (fs.readFileSync(path.join(BOT, 'bot.env'), 'utf8').match(/^BOT_OWNERS=['"]?([^'"\n]*)/m)?.[1] || '').trim()
+    return json(res, { list, owners })
+  }
   if (p === '/api/telegram') {
     const c = readConfig()
     if (req.method !== 'POST') {

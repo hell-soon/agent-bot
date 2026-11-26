@@ -6,6 +6,7 @@ import { api } from '../lib/api'
 import { aiName, modKey } from '../lib/format'
 import { bothAi, enabledSkills, loadCodex, saveSetting, setAi, store, toast } from '../lib/store'
 import Icon from './Icon.vue'
+import SetAccess from './settings/SetAccess.vue'
 import SetNotify from './settings/SetNotify.vue'
 import SetPerms from './settings/SetPerms.vue'
 import SetRepo from './settings/SetRepo.vue'
@@ -31,6 +32,7 @@ const TITLES: Record<DrawerPage, string> = {
   rules: 'Правила',
   perms: 'Разрешения',
   notify: 'Уведомления и сторож',
+  access: 'Доступ на GitHub',
   memory: 'Память',
 }
 const repoName = computed(() => store.curRepo.split('/')[1] || '')
@@ -174,6 +176,7 @@ async function saveMem() {
         <set-rules v-else-if="store.drawer === 'rules'" />
         <set-perms v-else-if="store.drawer === 'perms'" />
         <set-notify v-else-if="store.drawer === 'notify'" />
+        <set-access v-else-if="store.drawer === 'access'" />
 
         <template v-else-if="store.drawer === 'memory'">
           <p class="small">
@@ -266,6 +269,17 @@ async function saveMem() {
                 :size="16"
               /></span>
               <span class="lbl">Разрешения<small>{{ perms ? `своих правил: ${perms}` : 'какие команды можно в фоне' }}</small></span>
+              <span class="chev">›</span>
+            </button>
+            <button
+              class="nav-row"
+              @click="go('access')"
+            >
+              <span class="ic"><icon
+                name="shield"
+                :size="16"
+              /></span>
+              <span class="lbl">Доступ на GitHub<small>где установлен бот · чьи установки разрешены</small></span>
               <span class="chev">›</span>
             </button>
             <button
