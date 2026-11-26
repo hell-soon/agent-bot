@@ -334,6 +334,16 @@ function act(a: string) {
             v-html="md(it.text)"
           />
           <div
+            v-else-if="it.k === 'companion'"
+            :data-ei="it.ei"
+            class="msg"
+          >
+            <div class="who">
+              Мини-агент <span class="muted">· {{ it.mood }}</span>
+            </div>
+            {{ it.text }}
+          </div>
+          <div
             v-else-if="it.k === 'tool'"
             :data-ei="it.ei"
             class="tool"

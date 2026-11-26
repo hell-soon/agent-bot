@@ -7,6 +7,12 @@ type FeedItemBody
     text: string
   }
   | {
+    k: 'companion'
+    key: string
+    mood: string
+    text: string
+  }
+  | {
     k: 'files'
     key: string
     who?: 'bot' | 'user'
@@ -208,6 +214,14 @@ export function buildFeed(events: any[], short: (p: string) => string) {
       })
       if (ev.files?.length)
         push({ k: 'files', key: key(), files: ev.files })
+    }
+    else if (ev.type === 'bot_companion' && ev.text) {
+      push({
+        k: 'companion',
+        key: key(),
+        mood: ev.mood,
+        text: ev.text,
+      })
     }
     else if (ev.type === 'bot_files' && ev.files?.length) {
       push({ k: 'files', key: key(), who: ev.from === 'bot' ? 'bot' : 'user', files: ev.files })
