@@ -3,4 +3,14 @@
 BOT_DIR=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 REAL_GH=$(PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vx "$BOT_DIR/bin" | paste -sd: -) command -v gh)
 [ -n "$REAL_GH" ] || { echo "gh не найден: brew install gh" >&2; exit 127; }
-GH_TOKEN="$("$BOT_DIR/token.sh")" exec "$REAL_GH" "$@"
+# чей токен: репозиторий из -R/--repo или пути repos/owner/name, иначе BOT_REPO
+repo=""; prev=""
+for a in "$@"; do
+  case "$prev" in -R|--repo) repo=$a; break ;; esac
+  case "$a" in
+    --repo=*) repo=${a#--repo=}; break ;;
+    repos/*/*|/repos/*/*) r=${a#/}; r=${r#repos/}; r=${r%%\?*}; repo=$(printf '%s' "$r" | cut -d/ -f1-2); break ;;
+  esac
+  prev=$a
+done
+GH_TOKEN="$(BOT_REPO=${repo:-$BOT_REPO} "$BOT_DIR/token.sh")" exec "$REAL_GH" "$@"

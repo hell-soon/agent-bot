@@ -1060,13 +1060,11 @@ let reposCache = { at: 0, list: [] }
 async function repoList(force) {
   if (!force && reposCache.list.length && Date.now() - reposCache.at < 300000)
     return reposCache.list
-  const r = await gh([
-    'api',
-    '/installation/repositories',
-    '--paginate',
-    '--jq',
-    '[.repositories[].full_name]',
-  ])
+  // все установки приложения: ваш аккаунт и организации
+  const r = await new Promise(resolve => execFile(path.join(BOT, 'token.sh'), ['--repos'], { env: ENV, timeout: 30000 }, (err, out) => {
+    try { resolve(err ? [] : JSON.parse(out)) }
+    catch { resolve([]) }
+  }))
   const list = (Array.isArray(r)
     ? r
     : []).sort()

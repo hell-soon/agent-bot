@@ -97,7 +97,7 @@ setup_repo() {
   git config --local --unset-all credential.helper 2>/dev/null || true
   git config --local --add credential.helper ''
   git config --local --add credential.helper \
-    "!f() { echo username=x-access-token; echo password=\$($BOT_DIR/token.sh); }; f"
+    "!f() { echo username=x-access-token; echo password=\$(BOT_REPO=$REPO $BOT_DIR/token.sh); }; f"
 }
 
 fresh_main() { # чистый main с GitHub; несохранённое от прошлого раза — спросить (или отказаться в фоне)
@@ -117,6 +117,7 @@ REPO=${BOT_REPO:-}
 REPO=${REPO:-$(cfg .repo)}; REPO=${REPO:-$DEFAULT_REPO}
 [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "Неверный репозиторий: $REPO (нужно owner/name)" >&2; exit 1; }
 [ -n "$REPO" ] || { echo "Не знаю, в каком репозитории работать: bot -r owner/repo … или BOT_DEFAULT_REPO в bot.env" >&2; exit 1; }
+export BOT_REPO="$REPO" # token.sh берёт установку приложения того владельца (аккаунт или организация)
 WORK="$BOT_DIR/work/${REPO//\//__}"
 # прежняя раскладка (work/<имя>) — переносим один раз
 [ ! -d "$WORK" ] && [ -d "$BOT_DIR/work/${REPO#*/}/.git" ] && mv "$BOT_DIR/work/${REPO#*/}" "$WORK"
@@ -199,7 +200,7 @@ if [ -n "$BOT_REFS" ]; then
     r=${r// /}; [[ "$r" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || continue; [ "$r" = "$REPO" ] && continue
     d="$BOT_DIR/refs/${r//\//__}"
     if [ -d "$d/.git" ]; then git -C "$d" fetch -q --depth 1 origin HEAD 2>/dev/null && git -C "$d" reset -q --hard FETCH_HEAD
-    else mkdir -p "$BOT_DIR/refs"; git clone -q --depth 1 "https://x-access-token:$("$BOT_DIR/token.sh")@github.com/$r.git" "$d" || { echo "Нет доступа к $r — пропускаю" >&2; continue; }
+    else mkdir -p "$BOT_DIR/refs"; git clone -q --depth 1 "https://x-access-token:$(BOT_REPO=$r "$BOT_DIR/token.sh")@github.com/$r.git" "$d" || { echo "Нет доступа к $r — пропускаю" >&2; continue; }
       git -C "$d" remote set-url origin "https://github.com/$r.git"; fi
     OPTS+=(--disallowedTools "Edit(/$d/**)" "Write(/$d/**)" "Bash(git -C $d:*)" --add-dir "$d")
     REF_NOTE="$REF_NOTE
