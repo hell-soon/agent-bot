@@ -2,6 +2,8 @@
 // Чистые функции без ввода-вывода: сервер хранит доску в run.board, бот присылает план блоком ```plan {json}```.
 // Первый план бота ложится на пустую доску сразу, следующие — предложениями (принять / отклонить).
 
+import { acceptSketch, describeMarks, describeSketches, mergeSketches, parseSketches, sketchesForBot, sketchNear, sketchOp } from './featureSketch.mjs'
+
 const COL = 270 // шаг сетки раскладки по горизонтали (ширина карточки 220 + зазор)
 const ROW = 150 // и по вертикали
 const PAD = 40
@@ -20,6 +22,8 @@ export function emptyBoard() {
     items: [],
     links: [],
     suggestions: [],
+    sketches: [],
+    marks: [],
   }
 }
 
@@ -92,7 +96,11 @@ export function parsePlan(text) {
     if (step.has(from) && step.has(to) && !links.some(x => x.from === from && x.to === to) && !makesCycle(links, from, to))
       links.push({ from, to })
   }
-  return { items, links }
+  return {
+    items,
+    links,
+    sketches: parseSketches(data.sketches, step, ids),
+  }
 }
 
 // глубина шага = длина самой длинной цепочки зависимостей до него (колонка раскладки)
@@ -150,6 +158,14 @@ function nextId(b, prefix) {
   return id
 }
 
+// эскизы плана с привязкой к шагам после переименования id
+function planSketches(plan, idOf) {
+  return (plan.sketches || []).map(k => ({
+    ...k,
+    step: idOf(k.step),
+  }))
+}
+
 // План бота → доска. Первый план ложится сразу; следующие — предложения (прежние неразобранные заменяются новыми)
 export function mergeBotPlan(board, plan) {
   const b = clone(board || emptyBoard())
@@ -181,6 +197,7 @@ export function mergeBotPlan(board, plan) {
       by: 'bot',
     })))
     b.links.push(...links)
+    mergeSketches(b, planSketches(plan, idOf), true)
     return b
   }
   b.suggestions = []
@@ -250,6 +267,8 @@ export function mergeBotPlan(board, plan) {
     if (!now.has(key(l.from, l.to)) && inPlan.has(l.from) && inPlan.has(l.to))
       sug({ kind: 'unlink', from: l.from, to: l.to })
   }
+  // эскизы, которых нет в новом плане, не удаляются: бот мог их просто не повторить
+  mergeSketches(b, planSketches(plan, idOf), false, sug)
   return b
 }
 
@@ -260,6 +279,10 @@ function removeItem(b, id) {
   b.items = b.items.filter(i => i.id !== id)
   b.links = b.links.filter(l => l.from !== id && l.to !== id)
   b.suggestions = b.suggestions.filter(s => !touches(s, id))
+  for (const sk of b.sketches || []) {
+    if (sk.step === id)
+      sk.step = ''
+  }
 }
 
 function addLink(b, from, to) {
@@ -293,6 +316,12 @@ function accept(b, s) {
     return ''
   }
   if (s.kind === 'remove') { removeItem(b, s.target); return '' }
+  if (s.kind === 'sketch') {
+    // эскиз к ещё не принятому новому шагу — принимаем и шаг, чтобы привязка не потерялась
+    const add = pending(b, s.sketch.step)
+    const err = add && accept(b, add)
+    return err || acceptSketch(b, s)
+  }
   if (s.kind === 'unlink') { b.links = b.links.filter(l => !(l.from === s.from && l.to === s.to)); return '' }
   // link: если конец стрелки — ещё не принятый новый шаг, принимаем и его
   for (const id of [s.from, s.to]) {
@@ -384,6 +413,7 @@ export function applyOp(board, op) {
       const order = [
         'add',
         'edit',
+        'sketch',
         'link',
         'unlink',
         'remove',
@@ -399,8 +429,13 @@ export function applyOp(board, op) {
     case 'rejectAll':
       b.suggestions = []
       break
-    default:
-      return { error: 'Неизвестное действие с доской' }
+    default: {
+      const r = sketchOp(b, op || {})
+      if (!r)
+        return { error: 'Неизвестное действие с доской' }
+      err = r.error || ''
+      added = r.id || ''
+    }
   }
   if (err)
     return { error: err }
@@ -434,13 +469,18 @@ export function orderedSteps(board) {
 
 // Текущая доска для бота — к каждому сообщению, пока план не утверждён (человек мог её поправить)
 export function boardForBot(board) {
-  if (!board?.items?.length)
+  if (!board?.items?.length && !board?.sketches?.length)
     return ''
   const plan = {
     items: board.items.map(({ id, type, title, text }) => ({ id, type, title, text })),
     links: board.links.map(l => [l.from, l.to]),
+    sketches: sketchesForBot(board),
   }
-  return `\n\n---\nТекущая доска плана (с правками человека — они главнее твоих прежних):\n\`\`\`plan\n${JSON.stringify(plan)}\n\`\`\`\nМеняешь план — пришли его целиком новым блоком \`\`\`plan с теми же id; человек примет или отклонит изменения.`
+  const marks = describeMarks(board)
+  const marked = marks.length
+    ? `\nПометки человека от руки:\n${marks.join('\n')}`
+    : ''
+  return `\n\n---\nТекущая доска плана (с правками человека — они главнее твоих прежних):\n\`\`\`plan\n${JSON.stringify(plan)}\n\`\`\`${marked}\nМеняешь план — пришли его целиком новым блоком \`\`\`plan с теми же id; человек примет или отклонит изменения.`
 }
 
 // Сообщение боту по кнопке «Начать работу»: исходная задача + утверждённый план
@@ -457,7 +497,15 @@ export function approvedPlanText(board, task) {
       : ''
     return head + body
   })
-  const notes = board.items.filter(i => i.type === 'note' && (i.title || i.text)).map(nt => `- ${[nt.title, nt.text].filter(Boolean).join(': ')}`)
+  // заметка, положенная рядом с эскизом, — про него
+  const notes = board.items.filter(i => i.type === 'note' && (i.title || i.text)).map((nt) => {
+    const sk = sketchNear(board, nt)
+    return `- ${[nt.title, nt.text].filter(Boolean).join(': ')}${sk
+      ? ` (у эскиза «${sk.title || sk.id}»)`
+      : ''}`
+  })
+  const sketches = describeSketches(board, id => board.items.find(i => i.id === id)?.title || id)
+  const marks = describeMarks(board)
   return [
     'План утверждён — теперь можно менять код.',
     '',
@@ -468,6 +516,17 @@ export function approvedPlanText(board, task) {
     ...lines,
     ...(notes.length
       ? ['', '## Заметки', ...notes]
+      : []),
+    ...(sketches.length
+      ? [
+          '',
+          '## Эскизы интерфейса',
+          'Координаты блоков — в пикселях внутри эскиза, от левого верхнего угла. Человек мог их передвинуть и переподписать — делай по этой версии.',
+          ...sketches,
+        ]
+      : []),
+    ...(marks.length
+      ? ['', '## Пометки человека от руки', ...marks]
       : []),
     '',
     'Реализуй план по шагам в порядке зависимостей. Работай в новой ветке agent/<кратко> от свежей базовой ветки (git fetch origin, затем checkout от origin), не в базовой. Сделай проверки проекта, закоммить, запушь и открой PR в базовую ветку — по правилам из системного промпта. В описании PR — исходная задача и план. Если по ходу план приходится менять — коротко объясни в PR, что и почему.',

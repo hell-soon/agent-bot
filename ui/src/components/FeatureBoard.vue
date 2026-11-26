@@ -1,17 +1,20 @@
 <script setup lang="ts">
+import type { Mark, Sketch } from './SketchFrame.vue'
 // Мини-доска «Разработки фичи»: шаги, заметки, стрелки зависимостей и предложения бота.
 // Доска живёт на сервере (run.board, логика — featurePlan.mjs); здесь — показ и действия через /api/runs/:id/board.
 import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 import { api } from '../lib/api'
 import { toast } from '../lib/store'
+import SketchFrame from './SketchFrame.vue'
 
 interface Item { id: string, type: 'step' | 'note', title: string, text: string, x: number, y: number, by: 'bot' | 'user' }
-interface Sug { id: string, kind: 'add' | 'edit' | 'remove' | 'link' | 'unlink', item?: Item, target?: string, title?: string, text?: string, from?: string, to?: string }
-interface Board { rev: number, items: Item[], links: { from: string, to: string }[], suggestions: Sug[] }
+interface Sug { id: string, kind: 'add' | 'edit' | 'remove' | 'link' | 'unlink' | 'sketch', item?: Item, target?: string, title?: string, text?: string, from?: string, to?: string, sketch?: Sketch }
+interface Board { rev: number, items: Item[], links: { from: string, to: string }[], suggestions: Sug[], sketches?: Sketch[], marks?: Mark[] }
 
 const props = defineProps<{ run: any }>()
 const W = 220 // ширина карточки
 const HEAD = 24 // высота, на которой в карточку входят стрелки
+const SK_HEAD = 26 // заголовок рамки эскиза (как SKETCH_HEAD в featureSketch.mjs)
 
 const local = ref<Board | null>(null) // ответ сервера на своё действие — до прихода общего состояния
 const board = computed<Board>(() => {
@@ -95,13 +98,51 @@ const arrows = computed(() => {
   for (const s of board.value.suggestions.filter(x => x.kind === 'link')) add(s.from!, s.to!, s)
   return out
 })
+// ---------- эскизы ----------
+const moving = reactive<Record<string, { x: number, y: number }>>({}) // рамка, которую сейчас тащат
+const sketches = computed(() => {
+  const edits = new Map(board.value.suggestions.filter(s => s.kind === 'sketch' && s.target).map(s => [s.target!, s]))
+  return [
+    ...(board.value.sketches || []).map((sk) => {
+      const sug = edits.get(sk.id)
+      return { sk, sug, proposal: sug && { sketch: sug.sketch!, isNew: false } }
+    }),
+    ...board.value.suggestions.filter(s => s.kind === 'sketch' && !s.target).map(sug => ({
+      sk: sug.sketch!,
+      sug,
+      proposal: { sketch: sug.sketch!, isNew: true },
+    })),
+  ]
+})
+const skPos = (sk: Sketch) => moving[sk.id] || { x: sk.x, y: sk.y }
+function setMoving(id: string, p: { x: number, y: number } | null) {
+  if (p)
+    moving[id] = p
+  else
+    delete moving[id]
+}
+const stepList = computed(() => board.value.items.filter(i => i.type === 'step').map(i => ({ id: i.id, title: i.title })))
+// пунктир от шага к его эскизу
+const attach = computed(() => sketches.value.flatMap(({ sk }) => {
+  const a = sk.step && where.value.get(sk.step)
+  const p = skPos(sk)
+  return a
+    ? [
+        { key: sk.id, d: curve(a, { x: p.x, y: p.y - SK_HEAD / 2 - HEAD }).d },
+      ]
+    : []
+}))
+
 const size = computed(() => {
   const ps = [
-    ...where.value.values(),
+    ...[
+      ...where.value.values(),
+    ].map(p => ({ x: p.x + W + 60, y: p.y + 200 })),
+    ...sketches.value.map(({ sk }) => ({ x: skPos(sk).x + sk.w + 60, y: skPos(sk).y + sk.h + 80 })),
   ]
   return {
-    w: Math.max(...ps.map(p => p.x + W + 60), 600),
-    h: Math.max(...ps.map(p => p.y + 200), 320),
+    w: Math.max(...ps.map(p => p.x), 600),
+    h: Math.max(...ps.map(p => p.y), 320),
   }
 })
 const wirePath = computed(() => {
@@ -179,6 +220,86 @@ async function endWire(e: PointerEvent, cancelled: boolean) {
   const to = (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)?.closest<HTMLElement>('[data-step]')?.dataset.step
   if (!cancelled && to && to !== from)
     await op({ op: 'link', from, to })
+}
+
+// ---------- рисование от руки поверх доски и эскизов ----------
+const pen = ref(false)
+const stroke = ref<[number, number][]>([])
+const marks = computed(() => board.value.marks || [])
+const boardMarks = computed(() => marks.value.filter(m => !m.on))
+const marksOn = (id: string) => marks.value.filter(m => m.on === id)
+const pathOf = (pts: [number, number][]) => pts.map((p, i) => `${i ? 'L' : 'M'}${p[0]} ${p[1]}`).join('')
+let unpen = () => {}
+onBeforeUnmount(() => unpen())
+function startStroke(e: PointerEvent) {
+  if (e.button !== 0 || locked.value)
+    return
+  e.preventDefault()
+  unpen()
+  const p = at(e)
+  stroke.value = [
+    [
+      Math.round(p.x),
+      Math.round(p.y),
+    ],
+  ]
+  const move = (ev: PointerEvent) => {
+    const q = at(ev)
+    stroke.value.push([
+      Math.round(q.x),
+      Math.round(q.y),
+    ])
+  }
+  const up = (ev: PointerEvent) => {
+    unpen()
+    const pts = stroke.value
+    stroke.value = []
+    if (ev.type !== 'pointercancel' && pts.length > 1)
+      saveStroke(pts)
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', up)
+  window.addEventListener('pointercancel', up)
+  unpen = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', up)
+    window.removeEventListener('pointercancel', up)
+    unpen = () => {}
+  }
+}
+// штрих, начатый на эскизе, принадлежит ему (координаты — внутри рамки), иначе — доске
+function saveStroke(pts: [number, number][]) {
+  const [x, y] = pts[0]
+  const sk = [
+    ...(board.value.sketches || []),
+  ].reverse().find(s => x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h)
+  op({
+    op: 'mark',
+    on: sk?.id || '',
+    pts: sk
+      ? pts.map(([px, py]) => [px - sk.x, py - sk.y])
+      : pts,
+  })
+}
+function undoMark() {
+  const last = marks.value[marks.value.length - 1]
+  if (last)
+    op({ op: 'unmark', id: last.id })
+}
+function clearMarks() {
+  // eslint-disable-next-line no-alert -- простое подтверждение, как у карточек доски
+  if (confirm('Стереть все пометки от руки?'))
+    op({ op: 'clearMarks' })
+}
+function addSketch() {
+  const el = canvas.value?.parentElement
+  op({
+    op: 'addSketch',
+    title: 'Эскиз',
+    ...(el
+      ? { x: el.scrollLeft + 40, y: el.scrollTop + 40 + SK_HEAD }
+      : {}),
+  })
 }
 
 // ---------- правка и вопросы боту ----------
@@ -261,6 +382,7 @@ const SUG_TEXT: Record<string, string> = {
   remove: 'Бот предлагает удалить',
   link: 'Новая зависимость',
   unlink: 'Убрать зависимость',
+  sketch: 'Бот предлагает эскиз',
 }
 </script>
 
@@ -305,12 +427,42 @@ const SUG_TEXT: Record<string, string> = {
         >
           + Заметка
         </button>
+        <button
+          class="btn ghost sm"
+          @click="addSketch"
+        >
+          + Эскиз
+        </button>
+        <button
+          class="btn sm"
+          :class="pen ? 'primary' : 'ghost'"
+          title="Рисовать от руки поверх плана и эскизов"
+          @click="pen = !pen"
+        >
+          ✏ {{ pen ? 'Готово' : 'Рисовать' }}
+        </button>
+        <template v-if="marks.length">
+          <button
+            class="btn ghost sm"
+            title="Убрать последнюю пометку"
+            @click="undoMark"
+          >
+            ↶
+          </button>
+          <button
+            class="btn ghost sm"
+            title="Стереть все пометки"
+            @click="clearMarks"
+          >
+            Стереть
+          </button>
+        </template>
       </template>
     </header>
 
     <div class="viewport">
       <div
-        v-if="!cards.length"
+        v-if="!cards.length && !sketches.length"
         class="empty small"
       >
         {{ thinking ? 'Бот изучает код и строит план…' : 'Плана пока нет — добавьте шаги сами или попросите бота в ответе ниже.' }}
@@ -364,7 +516,28 @@ const SUG_TEXT: Record<string, string> = {
             class="wire"
             :d="wirePath"
           />
+          <path
+            v-for="a in attach"
+            :key="`att${a.key}`"
+            class="att"
+            :d="a.d"
+          />
         </svg>
+
+        <sketch-frame
+          v-for="v in sketches"
+          :key="v.sug && v.proposal?.isNew ? v.sug.id : v.sk.id"
+          :sketch="{ ...v.sk, ...skPos(v.sk) }"
+          :head="SK_HEAD"
+          :marks="v.proposal?.isNew ? [] : marksOn(v.sk.id)"
+          :steps="stepList"
+          :readonly="locked || pen"
+          :proposal="locked ? undefined : v.proposal"
+          :act="op"
+          @accept="op({ op: 'accept', id: v.sug!.id })"
+          @reject="op({ op: 'reject', id: v.sug!.id })"
+          @moving="p => setMoving(v.sk.id, p)"
+        />
 
         <div
           v-for="a in arrows.filter(x => x.sug && !locked)"
@@ -529,11 +702,34 @@ const SUG_TEXT: Record<string, string> = {
             @pointerdown.stop.prevent="startWire($event, c.it)"
           />
         </div>
+
+        <!-- пометки от руки на доске — поверх карточек; на эскизах их рисует сама рамка -->
+        <svg
+          class="ink"
+          :width="size.w"
+          :height="size.h"
+        >
+          <path
+            v-for="m in boardMarks"
+            :key="m.id"
+            :d="pathOf(m.pts)"
+          />
+          <path
+            v-if="stroke.length > 1"
+            :d="pathOf(stroke)"
+          />
+        </svg>
+        <div
+          v-if="pen && !locked"
+          class="pad"
+          title="Рисуйте поверх плана и эскизов"
+          @pointerdown="startStroke"
+        />
       </div>
     </div>
 
     <footer v-if="!locked">
-      <span class="small">{{ blocker || 'Бот получит исходную задачу и этот план. До нажатия код не меняется.' }}</span>
+      <span class="small">{{ blocker || 'Бот получит исходную задачу, этот план, эскизы и пометки. До нажатия код не меняется.' }}</span>
       <span class="spacer" />
       <button
         class="btn primary"
@@ -583,7 +779,7 @@ footer {
 }
 .viewport {
   position: relative;
-  height: 440px;
+  height: 520px;
   overflow: auto;
   background: var(--sunk);
   background-image: radial-gradient(var(--line) 1px, transparent 1px);
@@ -629,6 +825,31 @@ svg {
   &.off path {
     stroke: var(--bad);
   }
+}
+.att {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.2;
+  stroke-dasharray: 2 4;
+  opacity: 0.7;
+}
+svg.ink {
+  z-index: 4;
+  pointer-events: none;
+  path {
+    fill: none;
+    stroke: var(--bad);
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+.pad {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  cursor: crosshair;
+  touch-action: none;
 }
 .wire {
   fill: none;
