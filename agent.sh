@@ -250,6 +250,12 @@ if [ -n "$BOT_REFS" ]; then
   OPTS[1]="$PROMPT"   # обновить --append-system-prompt
 fi
 [ -n "$OUTBOX_NOTE" ] && { PROMPT="$PROMPT$OUTBOX_NOTE"; OPTS[1]="$PROMPT"; }
+# Карта проекта от панели (BOT_MAP): слои, слайсы, общие модули, что похоже на задачу — из графа импортов, без ИИ
+if [ -n "$BOT_MAP" ] && [ -s "$BOT_MAP" ]; then
+  PROMPT="$PROMPT
+
+$(head -c 5000 "$BOT_MAP")"; OPTS[1]="$PROMPT"
+fi
 
 # «Фича» (BOT_MODE=idea или bot idea): только обсуждение → спецификация → issue, код не трогать
 [ "$1" = idea ] && BOT_MODE=idea

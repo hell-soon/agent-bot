@@ -8,6 +8,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { FORMAT as ARCH_FORMAT, scan as archScan } from './arch-scan.mjs'
 import { codeGraph } from './code-graph.mjs'
+import { impactMarkdown, mapMarkdown } from './project-map.mjs'
 import * as skills from './skills.mjs'
 
 const PORT = 4545
@@ -404,8 +405,54 @@ function newRun(fields) {
   return run
 }
 
+// ---------- карта проекта перед задачей и «Что может задеть» в PR (из графа импортов, без ИИ) ----------
+let mapping = false
+const MAP_KINDS = new Set(['issue', 'pr', 'task', 'bug', 'idea'])
+async function prepareMap(run) {
+  if (readConfig().repos?.[run.repo]?.map === false || !MAP_KINDS.has(run.kind) || !isRepo(run.repo))
+    return
+  let text = `${run.title || ''}\n${run.text || ''}`
+  let extra = []
+  if (run.kind === 'issue') {
+    const i = await gh(['issue', 'view', String(run.issue), '-R', run.repo, '--json', 'title,body'])
+    text += `\n${i?.title || ''}\n${i?.body || ''}`
+  }
+  if (run.kind === 'pr') {
+    const files = await gh(['api', `repos/${run.repo}/pulls/${run.pr}/files?per_page=100`])
+    extra = (Array.isArray(files) ? files : []).map(f => f.filename)
+  }
+  const g = await codeData(run.repo)
+  if (!g.files?.length)
+    return
+  const { md, relevant } = mapMarkdown(g, text, extra)
+  const file = path.join(UPLOADS, 'map', `${run.id}.md`)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, md)
+  run.mapFile = file
+  appendEvent(run, { type: 'bot_note', text: `Карта проекта: ${relevant.length ? `похоже, задача про ${relevant.slice(0, 4).join(', ')}` : 'слои и слайсы'} — из графа импортов`, at: Date.now() })
+}
+async function prImpact(run) {
+  const n = Number(String(run.prUrl).split('/').pop()); const R = `repos/${run.repo}`
+  if (!n)
+    return false
+  const files = await gh(['api', `${R}/pulls/${n}/files?per_page=100`])
+  const changed = (Array.isArray(files) ? files : []).map(f => f.filename)
+  if (!changed.length)
+    return false
+  const body = impactMarkdown(await codeData(run.repo), changed)
+  const comments = await gh(['api', `${R}/issues/${n}/comments?per_page=100`])
+  const mine = (Array.isArray(comments) ? comments : []).find(c => String(c.body).includes('<!-- agent-bot:impact -->'))
+  const file = path.join(UPLOADS, 'map', `impact-${run.id}.md`)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, body)
+  await sh('gh', mine
+    ? ['api', '-X', 'PATCH', `${R}/issues/comments/${mine.id}`, '-F', `body=@${file}`]
+    : ['api', '-X', 'POST', `${R}/issues/${n}/comments`, '-F', `body=@${file}`])
+  return mine ? 'updated' : 'created'
+}
+
 function next() {
-  if (current)
+  if (current || mapping)
     return
   const run = runs.find(r => r.status === 'queued')
   if (!run)
@@ -420,6 +467,14 @@ function next() {
     run.base = prev.prUrl
       ? prev.branch
       : (prev.base || 'main')
+  }
+  // перед первым запуском — карта проекта (не дольше 25 с; без неё задача всё равно стартует)
+  if (!run.mapDone && !run.continue && !run.reply) {
+    mapping = true
+    Promise.race([prepareMap(run), new Promise(r => setTimeout(r, 25000))])
+      .catch(e => console.error('карта проекта:', e.message))
+      .finally(() => { mapping = false; run.mapDone = true; next() })
+    return
   }
   const cont = run.continue && run.sessionId && run.branch
   const args = cont
@@ -486,6 +541,8 @@ function next() {
   if (files?.length)
     env.BOT_FILES = files.join('\n')
   env.BOT_OUTBOX = outboxOf(run)
+  if (run.mapFile && fs.existsSync(run.mapFile))
+    env.BOT_MAP = run.mapFile
   if (run.kind === 'idea')
     env.BOT_MODE = 'idea'
   const turnStart = Date.now()
@@ -646,6 +703,11 @@ function next() {
     })
     pushState()
     notify(run)
+    if (run.prUrl && run.status === 'done' && readConfig().repos?.[run.repo]?.impact !== false) {
+      prImpact(run)
+        .then(r => r && (appendEvent(run, { type: 'bot_note', text: r === 'updated' ? 'Комментарий «Что может задеть» в PR обновлён' : 'В PR — комментарий «Что может задеть»', at: Date.now() }), pushState()))
+        .catch(e => console.error('impact:', e.message))
+    }
     next()
   })
 }
@@ -828,6 +890,8 @@ const REPO_FIELDS = {
   draft: v => typeof v === 'boolean',
   reviewers: v => typeof v === 'string' && /^[\w,\s/-]{0,200}$/.test(v),
   labels: v => typeof v === 'string' && /^[\w,\s:.-]{0,200}$/.test(v),
+  map: v => typeof v === 'boolean', // карта проекта в инструкциях перед задачей
+  impact: v => typeof v === 'boolean', // комментарий «Что может задеть» в PR
 }
 const AUTO_FIELDS = ['issues', 'ci', 'reviews', 'conflicts']
 function writeRepoConfig(repo, patch) {
@@ -1795,7 +1859,7 @@ ${ARCH_FORMAT}`,
       ].includes(run.status)) {
         if (run.status === 'limited')
           run.status = 'stopped'
-        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, modelUsed, replyFiles, outSeen, outNew, codexImgs, ...rest } = run
+        const { id, status, createdAt, cost, turns, sessionId, error, prUrl, branch, lastResult, startedAt, endedAt, after, note, reason, resumeAt, lastText, closedIssue, tokIn, tokOut, tokCached, ctx, ctxMax, liveIn, liveOut, watchdog, modelUsed, replyFiles, outSeen, outNew, codexImgs, mapDone, mapFile, ...rest } = run
         newRun(rest)
       }
     }

@@ -14,6 +14,8 @@ const s = reactive<Record<string, any>>({
   draft: false,
   reviewers: '',
   labels: '',
+  map: true,
+  impact: true,
   auto: {
     issues: false,
     ci: false,
@@ -28,7 +30,7 @@ const checking = ref(false)
 
 async function load() {
   const r = await api(`/api/repo-settings?repo=${encodeURIComponent(store.curRepo)}`)
-  Object.assign(s, r.settings, {
+  Object.assign(s, { map: true, impact: true }, r.settings, {
     auto: {
       ...s.auto,
       ...(r.settings.auto || {}),
@@ -157,6 +159,30 @@ const AUTO = [
             {{ m.name }}
           </option>
         </select>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h4>Знание проекта</h4>
+      <div class="set">
+        <div class="lbl">
+          Карта проекта перед задачей<small>Слои, слайсы, общие модули и что похоже на задачу — из графа импортов, без ИИ. Меньше поиска — меньше токенов</small>
+        </div>
+        <label class="sw"><input
+          type="checkbox"
+          :checked="s.map"
+          @change="save({ map: ($event.target as HTMLInputElement).checked })"
+        ><span /></label>
+      </div>
+      <div class="set">
+        <div class="lbl">
+          «Что может задеть» в PR<small>Комментарий: кто использует изменённые слайсы — их стоит проверить</small>
+        </div>
+        <label class="sw"><input
+          type="checkbox"
+          :checked="s.impact"
+          @change="save({ impact: ($event.target as HTMLInputElement).checked })"
+        ><span /></label>
       </div>
     </div>
 
